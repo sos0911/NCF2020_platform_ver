@@ -33,10 +33,12 @@ from termcolor import colored, cprint
 
 from .consts import ArmyStrategy, CommandType, EconomyStrategy
 
+INF = 1e9
 
 nest_asyncio.apply()
 
-
+# model architecture 정의
+# forward() 정의
 class Model(nn.Module):
     def __init__(self):
         super().__init__()
@@ -54,6 +56,7 @@ class Model(nn.Module):
         value = self.vf(x)
         economy_logp = torch.log_softmax(self.economy_head(x), -1)
         army_logp = torch.log_softmax(self.army_head(x), -1)
+        # bz = ??
         bz = x.shape[0]
         logp = (economy_logp.view(bz, -1, 1) + army_logp.view(bz, 1, -1)).view(bz, -1)
         return value, logp
@@ -106,6 +109,7 @@ class Bot(sc2.BotAI):
         """
 
         """
+        # 아래 action들이 이번 step에 할 수 있는 액션의 풀을 나타내는 건가..?
         actions = list() # 이번 step에 실행할 액션 목록
 
         if self.time - self.last_step_time >= self.step_interval:
@@ -134,6 +138,7 @@ class Bot(sc2.BotAI):
         state[2] = min(1.0, self.vespene / 1000)
         state[3] = min(1.0, self.time / 360)
         state[4] = min(1.0, self.state.score.total_damage_dealt_life / 2500)
+        # 구조물이 아닌 유닛 for문??
         for unit in self.units.not_structure:
             state[5 + EconomyStrategy.to_index[unit.type_id]] += 1
         state = state.reshape(1, -1)
@@ -145,6 +150,8 @@ class Bot(sc2.BotAI):
             pickle.dumps(state.shape),
             state,
         ]
+        # self.sock이 무슨 의미일까?
+        # actor-critic에서 multuple actor?
         if self.sock is not None:
             self.sock.send_multipart(data)
             data = self.sock.recv_multipart()
@@ -156,6 +163,9 @@ class Bot(sc2.BotAI):
                 value = value.item()
                 action = logp.exp().multinomial(num_samples=1).item()
 
+        # 다음에 뭘 뽑을지 선택하는 것 = economy_strategy
+        # 여기 왕중요!!!!!!!! 결국 RL이 학습한 action은 economy_strategy와 army_strategy을 결정.
+        # 즉 다음에 뭘뽑을지랑 공격 타이밍만 RL로 학습하고 유닛별 컨트롤이나 그런건 Rule-based로 구성됨.
         economy_strategy = EconomyStrategy.to_type_id[action // len(ArmyStrategy)]
         army_strategy = ArmyStrategy(action % len(ArmyStrategy))
         return economy_strategy, army_strategy
@@ -169,6 +179,7 @@ class Bot(sc2.BotAI):
         if self.can_afford(next_unit):
             if self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0:
                 # 해당 유닛 생산 가능하고, 마지막 명령을 발행한지 1초 이상 지났음
+                # cc : command center
                 actions.append(self.cc.train(next_unit))
                 self.evoked[(self.cc.tag, 'train')] = self.time
         return actions
@@ -180,6 +191,7 @@ class Bot(sc2.BotAI):
         actions = list()
         for unit in self.units.not_structure:  # 건물이 아닌 유닛만 선택
             enemy_unit = self.enemy_start_locations[0]
+            # 알려진 enemy unit이 존재한다면?
             if self.known_enemy_units.exists:
                 enemy_unit = self.known_enemy_units.closest_to(unit)  # 가장 가까운 적 유닛
 
@@ -208,6 +220,7 @@ class Bot(sc2.BotAI):
                                 actions.append(unit(AbilityId.EFFECT_STIM))
                                 self.evoked[(unit.tag, AbilityId.EFFECT_STIM)] = self.time
 
+            # 자기가 수송선일 때..
             if unit.type_id is UnitTypeId.MEDIVAC:
                 if self.wounded_units.exists:
                     wounded_unit = self.wounded_units.closest_to(unit)  # 가장 가까운 체력이 100% 이하인 유닛
@@ -216,11 +229,162 @@ class Bot(sc2.BotAI):
                     # 회복시킬 유닛이 없으면, 전투 그룹 중앙에서 대기
                     if self.combat_units.exists:
                         actions.append(unit.move(self.combat_units.center))
+            
+            # 시즈탱크라면?
+            if unit.type_id is UnitTypeId.SIEGETANK 
+                # 적이 보이고 사정거리 내에 있는데 붙어 있지 않으면 바로 시즈모드
+                if self.known_enemy_units.exists :
+                    # 시즈탱크가 공격 가능한 지상 유닛이어야 함
+                    enemy_ground_units = self.known_enemy_units.not_flying
+                    mindist = 500 # mindist
+                    closest_pos = Point2()
+                    for eunit in enemy_ground_units:
+                        # 각 적 유닛간의 거리 조사
+                        if mindist > unit.distance_to(eunit):
+                            mindist = unit.distance_to(eunit)
+                            closest_pos = eunit.position
+                    
+                    if mindist >= 6.0 and mindist <= 13.0:
+                        actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
+                    
+                    # 적이 날 공격하려 한다면 반대방향으로 튀자..
+                    # 무빙샷 구현은 어떻게?
+                    if mindist < 6.0:
+                        dest = unit.position - eunit.position + unit.position
+                        actions.append(unit.move(dest)))
+
+            # 시즈모드 시탱
+            if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
+                 if self.known_enemy_units.exists :
+                    enemyunits = self.known_enemy_units
+                    mindist = 500 # mindist
+                    closest_pos = Point2()
+                    for eunit in enemyunits:
+                        if eunit.can_attack_ground == False:
+                            continue
+                        # 각 적 유닛간의 거리 조사
+                        if mindist > unit.distance_to(eunit):
+                            mindist = unit.distance_to(eunit)
+                            closest_pos = eunit.position
+                    # 너무 붙었으면 바로 시즈모드 해제
+                    if mindist < 6.0:
+                        actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+
+
+            # 사신은 쓰지 않을 것이므로 제외
+
+            # 토르라면?
+            # default는 폭약 모드(경장갑)
+            # morph로 고폭탄 모드로 변경 가능
+            # THOR(폭약), THORAP(고폭탄)
+            if unit.type_id is UnitTypeId.THOR:
+                # 전투순양함이 사거리 내에 들어오면 바로 고폭탄 모드로 변경
+                enemy_inrange_units = self.known_enemy_units.in_attack_range_of(unit)
+                for eunit in enemy_inrange_units:
+                    if eunit.type_id is BATTLECRUISER:
+                        actions.append(unit(MORPH_THORHIGHIMPACTMODE))
+                        break
+
+            if unit.type_id is UnitTypeId.THORAP:
+                # 전투순양함이 시야나 사거리 내에서 사라지면 다시 디폴트로 변경
+                enemy_inrange_units = self.known_enemy_units.in_attack_range_of(unit)
+                batcheck = False
+                # 사정거리 내 배틀크루저 중 가장 hp가 적은 놈을 집중사격
+                closest_battle = None
+                minHP_battle = INF
+                for eunit in enemy_inrange_units:
+                    if eunit.type_id is BATTLECRUISER:
+                        if batcheck is False:
+                            batcheck = True
+                        if minHP_battle > eunit.health
+                            minHP_battle = eunit.health
+                            closest_battle = eunit
+
+                if batcheck is True:
+                    actions.append(unit.attack(closest_battle))
+                else:
+                    actions.append(unit(MORPH_THOREXPLOSIVEMODE))
+
+            # 토르가 공성전차에겐 약하다.. 이속이 느려서
+            # 이것에 대한 코드도 추가예정
+
+
+            # 바이킹 전투기 모드(공중)
+            if unit.type_id is UnitTypeId.VIKINGASSAULT:
+                # 무빙샷이 필요
+                # 한방이 쎈 유닛이다.
+                # 사정거리 내면 치고 빠지기
+                temp = self.known_enemy_units.in_attack_range_of(unit)
+                enemy_flying_unit = temp.flying
+                if enemy_flying_unit.amount > 0:
+                    target = None
+                    targetHP = INF
+                    targetPos = Point2()
+                    for eunit in enemy_flying_unit:
+                        if eunit.health < targetHP:
+                            target = eunit
+                            targetHP = eunit.health
+                            targetPos = eunit.position
+                    
+                    actions.append(unit.attack(target))
+                    # 도망가기
+                    # dir normalize도 있나..?
+                    movdir = unit.position - target.position
+                    actions.append(unit.move(unit.position + movdir*3))
+                
+                # 커맨드 주위에 아무도 없을 때 변신해서 커맨드 부순다.
+                temp2 = self.known_enemy_structures.in_attack_range_of(unit)
+                cc_of_enemy = self.units(COMMANDCENTER)
+                if temp.amount == 0 and cc_of_enemy.first in temp2:
+                    actions.append(unit(MORPH_VIKINGFIGHTERMODE))
+                    actions.append(unit.attack(self.enemy_cc))
+
+
+            # 바이킹 전투 모드(지상)
+            if unit.type_id is UnitTypeId.VIKINGFIGHTER:
+                # 탱크가 일정 거리 내에 있으면(시즈 모드 거리에) 전투기 변환
+                enemy_tanks = self.known_enemy_units.filter(lambda u : u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
+                for eunit in enemy_tanks:
+                    if eunit.ground_range >= unit.distance_to(eunit):
+                        actions.append(unit(MORPH_VIKINGASSAULTMODE))
+                        break
+               
+
+
+            # 밴시? 
+            # 공성전차를 위주로 잡게 한다.
+            # 기본적으로 공성전차를 찾아다니되 들키면 튄다 ㅎㅎ
+            if unit.type_id is UnitTypeId.BANSHEE:
+                # 마나를 조금 채우고 움직인다.
+                if unit.energy_percentage >= 0.5:
+                    enemy_tanks = self.known_enemy_units.filter(lambda u : u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
+                    target = enemy_tanks.closest_to(unit.position)
+                    actions.append(unit.attack(target))
+                
+                # 만약 주위에 자신을 공격 가능한 유닛이 있다면 클로킹에 들어간다.
+                # 마나가 없거나 들키면 도망간다
+                threats = self.known_enemy_units.filter(lambda u : u.can_attack_air and u.air_range >= unit.distance_to(u))
+                if threats.amount > 0:
+                    if unit.cloak == Unit.CloakState.NotCloaked:
+                        actions.append(unit(BEHAVIOR_CLOAKON_BANSHEE))
+                    else if unit.cloak == Unit.CloakState.CloakedDetected or unit.energy_percentage < 0.2:
+                        closest_threat = threats.closest_to(unit.position)
+                        actions.append(unit.move((unit.position - closest_threat.position)*3 + unit.position))
+
+                # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
+                else if threats.amount == 0 and unit.cloak == Unit.CloakState.Cloaked:
+                    actions.append(unit(BEHAVIOR_CLOAKOFF_BANSHEE))
+            
+            # 이제 남은거..
+            # 부대지정을 어떻게 할까..?
+
 
         return actions
 
     def on_end(self, game_result):
         if self.sock is not None:
+            # 신기한 문법..p
+            # score = 각 trajectory에 대한 reward 용도...?
             score = 1. if game_result is Result.Victory else -1.
             self.sock.send_multipart((
                 CommandType.SCORE, 
