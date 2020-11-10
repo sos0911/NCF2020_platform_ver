@@ -1,5 +1,3 @@
-
-
 from enum import Enum
 from collections import namedtuple
 from sc2.ids.unit_typeid import UnitTypeId

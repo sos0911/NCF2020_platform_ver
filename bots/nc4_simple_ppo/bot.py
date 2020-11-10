@@ -14,6 +14,7 @@ os.environ['MKL_NUM_THREADS'] = '1'
 import pathlib
 import pickle
 import time
+import math
 
 import nest_asyncio
 import numpy as np
@@ -24,14 +25,19 @@ import torch.nn.functional as F
 import torch.optim as optim
 from IPython import embed
 from sc2.data import Result
+from sc2.data import CloakState
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.buff_id import BuffId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.player import Bot as _Bot
 from sc2.position import Point2
 from termcolor import colored, cprint
+from sc2.pixel_map import PixelMap
+import random
 
-from .consts import ArmyStrategy, CommandType, EconomyStrategy
+# .을 const 앞에 왜 찍는 거지?
+from consts import ArmyStrategy, CommandType, EconomyStrategy
+
 
 INF = 1e9
 
@@ -54,8 +60,8 @@ class Model(nn.Module):
         x = F.relu(self.norm1(self.fc1(x)))
         x = F.relu(self.norm2(self.fc2(x)))
         value = self.vf(x)
-        economy_logp = torch.log_softmax(self.economy_head(x), -1)
-        army_logp = torch.log_softmax(self.army_head(x), -1)
+        economy_logp = F.log_softmax(self.economy_head(x), -1)
+        army_logp = F.log_softmax(self.army_head(x), -1)
         # bz = ??
         bz = x.shape[0]
         logp = (economy_logp.view(bz, -1, 1) + army_logp.view(bz, 1, -1)).view(bz, -1)
@@ -105,6 +111,7 @@ class Bot(sc2.BotAI):
         # data = (JOIN, game_id)
         # self.sock.send_multipart([pickle.dumps(d) for d in data])
 
+    # step마다 계속 실행됨
     async def on_step(self, iteration: int):
         """
 
@@ -123,6 +130,10 @@ class Bot(sc2.BotAI):
         self.wounded_units = self.units.filter(
             lambda u: u.is_biological and u.health_percentage < 1.0
         )  # 체력이 100% 이하인 유닛 검색
+
+        self.known_enemy_units = self.known_enemy_units()
+
+        self.known_enemy_structures = self.known_enemy_structures()
 
         actions += self.train_action()
         actions += self.unit_actions()
@@ -194,7 +205,6 @@ class Bot(sc2.BotAI):
             # 알려진 enemy unit이 존재한다면?
             if self.known_enemy_units.exists:
                 enemy_unit = self.known_enemy_units.closest_to(unit)  # 가장 가까운 적 유닛
-
             # 적 사령부와 가장 가까운 적 유닛중 더 가까운 것을 목표로 설정
             if unit.distance_to(self.enemy_cc) < unit.distance_to(enemy_unit):
                 target = self.enemy_cc
@@ -231,7 +241,7 @@ class Bot(sc2.BotAI):
                         actions.append(unit.move(self.combat_units.center))
             
             # 시즈탱크라면?
-            if unit.type_id is UnitTypeId.SIEGETANK 
+            if unit.type_id is UnitTypeId.SIEGETANK :
                 # 적이 보이고 사정거리 내에 있는데 붙어 있지 않으면 바로 시즈모드
                 if self.known_enemy_units.exists :
                     # 시즈탱크가 공격 가능한 지상 유닛이어야 함
@@ -251,7 +261,7 @@ class Bot(sc2.BotAI):
                     # 무빙샷 구현은 어떻게?
                     if mindist < 6.0:
                         dest = unit.position - eunit.position + unit.position
-                        actions.append(unit.move(dest)))
+                        actions.append(unit.move(dest))
 
             # 시즈모드 시탱
             if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
@@ -281,8 +291,8 @@ class Bot(sc2.BotAI):
                 # 전투순양함이 사거리 내에 들어오면 바로 고폭탄 모드로 변경
                 enemy_inrange_units = self.known_enemy_units.in_attack_range_of(unit)
                 for eunit in enemy_inrange_units:
-                    if eunit.type_id is BATTLECRUISER:
-                        actions.append(unit(MORPH_THORHIGHIMPACTMODE))
+                    if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                        actions.append(unit(AbilityId.MORPH_THORHIGHIMPACTMODE))
                         break
 
             if unit.type_id is UnitTypeId.THORAP:
@@ -293,18 +303,17 @@ class Bot(sc2.BotAI):
                 closest_battle = None
                 minHP_battle = INF
                 for eunit in enemy_inrange_units:
-                    if eunit.type_id is BATTLECRUISER:
+                    if eunit.type_id is UnitTypeId.BATTLECRUISER:
                         if batcheck is False:
                             batcheck = True
-                        if minHP_battle > eunit.health
+                        if minHP_battle > eunit.health:
                             minHP_battle = eunit.health
                             closest_battle = eunit
 
                 if batcheck is True:
                     actions.append(unit.attack(closest_battle))
                 else:
-                    actions.append(unit(MORPH_THOREXPLOSIVEMODE))
-
+                    actions.append(unit(AbilityId.MORPH_THOREXPLOSIVEMODE))
             # 토르가 공성전차에겐 약하다.. 이속이 느려서
             # 이것에 대한 코드도 추가예정
 
@@ -334,9 +343,9 @@ class Bot(sc2.BotAI):
                 
                 # 커맨드 주위에 아무도 없을 때 변신해서 커맨드 부순다.
                 temp2 = self.known_enemy_structures.in_attack_range_of(unit)
-                cc_of_enemy = self.units(COMMANDCENTER)
+                cc_of_enemy = self.units(UnitTypeId.COMMANDCENTER)
                 if temp.amount == 0 and cc_of_enemy.first in temp2:
-                    actions.append(unit(MORPH_VIKINGFIGHTERMODE))
+                    actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
                     actions.append(unit.attack(self.enemy_cc))
 
 
@@ -346,7 +355,7 @@ class Bot(sc2.BotAI):
                 enemy_tanks = self.known_enemy_units.filter(lambda u : u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
                 for eunit in enemy_tanks:
                     if eunit.ground_range >= unit.distance_to(eunit):
-                        actions.append(unit(MORPH_VIKINGASSAULTMODE))
+                        actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
                         break
                
 
@@ -365,15 +374,70 @@ class Bot(sc2.BotAI):
                 # 마나가 없거나 들키면 도망간다
                 threats = self.known_enemy_units.filter(lambda u : u.can_attack_air and u.air_range >= unit.distance_to(u))
                 if threats.amount > 0:
-                    if unit.cloak == Unit.CloakState.NotCloaked:
-                        actions.append(unit(BEHAVIOR_CLOAKON_BANSHEE))
-                    else if unit.cloak == Unit.CloakState.CloakedDetected or unit.energy_percentage < 0.2:
+                    if unit.cloak == CloakState.NotCloaked:
+                        actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
+                    elif unit.cloak == CloakState.CloakedDetected or unit.energy_percentage < 0.2:
                         closest_threat = threats.closest_to(unit.position)
-                        actions.append(unit.move((unit.position - closest_threat.position)*3 + unit.position))
+                        dest = (unit.position - closest_threat.position)*3 + unit.position
+                        dest.x = min(dest.x, PixelMap.width)
+                        dest.y = min(dest.y, PixelMap.height)
+                        actions.append(unit.move(dest))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
-                else if threats.amount == 0 and unit.cloak == Unit.CloakState.Cloaked:
-                    actions.append(unit(BEHAVIOR_CLOAKOFF_BANSHEE))
+                elif threats.amount == 0 and unit.cloak == CloakState.Cloaked:
+                    actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
+
+            # 화염차
+            # 경장갑 위주로 때린다 / 정찰용
+            # 원래는 일꾼제거용인데 그게 없으니 테테전 가정 하에
+            # 경장갑만 잡는다.
+            # 때리더라도 일직선으로 나가기에, 그 안에 최대한 많이 애들을 집어넣어 때리는게 중요
+            # 근데 그걸 구현을 어떻게 하지 ㅋㅋㅋ
+            # 근처에 없으면 그냥 가까이 있는 지상유닛 아무나 때린다.
+            if unit.tpye_id is UnitTypeId.HELLION:
+                # 정찰을 가본다. 기본적으로는 상대 cc로
+                # cc를 이미 비추고 있는 유닛이 있다면 랜덤으로 다른 곳으로 가본다.
+                # 가다가 지상유닛 누군가를 만나면 그 중 경장갑 위주로 때리기. 
+                if not unit.is_moving and not unit.is_attacking:
+                    if self.is_visible(self.enemy_cc):
+                        actions.append(unit.attack(Point2((random.randint(0,PixelMap.width), random.randint(0,PixelMap.height)))))
+                    else:
+                        # 커맨드 invisible이면 우선 보이게 하는 것이 목적
+                        actions.append(unit.move(self.enemy_cc))
+
+
+                # 쿨타임 중에는 빠지기
+                # 쿨타임이 차면 공격한 다음 빠지기
+                # 단위가 frame
+                if unit.weapon_cooldown < 15:
+                    target = None
+                    min_dist = math.sqrt(PixelMap.height*2 + PixelMap.width*2) + 10
+                    for eunit in self.known_enemy_units:
+                        if eunit.visible and eunit.is_light and target.distance_to(unit) < min_dist:
+                            target = eunit
+                            min_dist = target.distance_to(unit)
+                    if target is not None:
+                        actions.append(unit.attack(target))
+                else:
+                    threats = self.known_enemy_units.filter(lambda u : u.can_attack_ground and u.ground_range >= unit.distance_to(u))
+                    maxdist = 0
+                    for eunit in self.known_enemy_units:
+                        if eunit.can_attack_ground and eunit.ground_range >= unit.distance_to(eunit):
+                            maxdist = max(maxdist, eunit.ground_range - unit.distance_to(eunit))
+                    total_move_vector = Point2((0,0))
+                    for eunit in threats:
+                        move_vector = unit.position - eunit.positon
+                        move_vector /= math.sqrt(move_vector.x*2 + move_vector.y*2)
+                        move_vector *= (eunit.ground_range - unit.distance_to(eunit))*1.5
+                        total_move_vector += move_vector
+                    if not threats.empty:
+                        total_move_vector /= math.sqrt(total_move_vector.x*2 + total_move_vector.y*2)
+                        total_move_vector *= maxdist
+                    
+                    # 이동!
+                    #actions.append(unit.move(unit.position + total_move_vector))
+                    actions.append(unit.attack(unit.position + total_move_vector))
+
             
             # 이제 남은거..
             # 부대지정을 어떻게 할까..?
