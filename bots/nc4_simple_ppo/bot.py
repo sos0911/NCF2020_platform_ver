@@ -36,7 +36,7 @@ from sc2.pixel_map import PixelMap
 import random
 
 # .을 const 앞에 왜 찍는 거지?
-from consts import ArmyStrategy, CommandType, EconomyStrategy
+from consts import ArmyStrategy, CommandType, EconomyStrategy, NuclearStrategy
 
 
 INF = 1e9
@@ -55,6 +55,7 @@ class Model(nn.Module):
         self.vf = nn.Linear(64, 1)
         self.economy_head = nn.Linear(64, len(EconomyStrategy))
         self.army_head = nn.Linear(64, len(ArmyStrategy))
+        self.nuclear_head = nn.Linear(64, len(NuclearStrategy))
 
     def forward(self, x):
         x = F.relu(self.norm1(self.fc1(x)))
@@ -62,9 +63,11 @@ class Model(nn.Module):
         value = self.vf(x)
         economy_logp = F.log_softmax(self.economy_head(x), -1)
         army_logp = F.log_softmax(self.army_head(x), -1)
+        nuclear_logp = F.log_softmax(self.nuclear_head(x), -1)
         # bz = ??
         bz = x.shape[0]
-        logp = (economy_logp.view(bz, -1, 1) + army_logp.view(bz, 1, -1)).view(bz, -1)
+        # 아래 logp가 의미하는 게 뭐지..
+        logp = (economy_logp.view(bz, -1, 1) + army_logp.view(bz, 1, -1) + nuclear_logp.view(bz, 1, -1)).view(bz, -1)
         return value, logp
 
 
@@ -97,6 +100,7 @@ class Bot(sc2.BotAI):
 
         self.economy_strategy = EconomyStrategy.MARINE.value
         self.army_strategy = ArmyStrategy.DEFENSE
+        self.nuclear_strategy = NuclearStrategy.REMAIN
 
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 전체 유닛에서 사령부 검색
         # (32.5, 31.5) or (95.5, 31.5)
@@ -120,7 +124,7 @@ class Bot(sc2.BotAI):
         actions = list() # 이번 step에 실행할 액션 목록
 
         if self.time - self.last_step_time >= self.step_interval:
-            self.economy_strategy, self.army_strategy = self.set_strategy()
+            self.economy_strategy, self.army_strategy, self.nuclear_strategy = self.set_strategy()
             self.last_step_time = self.time
 
         # set info
@@ -177,9 +181,15 @@ class Bot(sc2.BotAI):
         # 다음에 뭘 뽑을지 선택하는 것 = economy_strategy
         # 여기 왕중요!!!!!!!! 결국 RL이 학습한 action은 economy_strategy와 army_strategy을 결정.
         # 즉 다음에 뭘뽑을지랑 공격 타이밍만 RL로 학습하고 유닛별 컨트롤이나 그런건 Rule-based로 구성됨.
+        # action을 model로부터 받으며, sclalr이다. action이 짝수면 방어, 홀수면 공격
+        # 또, 2씩 나눠서 볼때 각 2의 구간은 어떤 유닛을 뽑을지에 해당
+
+        # action이 이 세 가지를 커버 가능하게 생산이 되나..?
         economy_strategy = EconomyStrategy.to_type_id[action // len(ArmyStrategy)]
         army_strategy = ArmyStrategy(action % len(ArmyStrategy))
-        return economy_strategy, army_strategy
+        nuclear_strategy = NuclearStrategy(action % len(NuclearStrategy))
+
+        return economy_strategy, army_strategy, nuclear_strategy
 
     def train_action(self):
         #
@@ -193,6 +203,11 @@ class Bot(sc2.BotAI):
                 # cc : command center
                 actions.append(self.cc.train(next_unit))
                 self.evoked[(self.cc.tag, 'train')] = self.time
+
+        # 만약 핵을 생산하기로 하였으면, 핵 생산
+        if self.nuclear_strategy == NuclearStrategy.PRODUCE and self.can_afford(UnitTypeId.NUKE):
+            actions.append(self.cc(AbilityId.BUILD_NUKE))
+            
         return actions
 
     def unit_actions(self):
@@ -260,7 +275,7 @@ class Bot(sc2.BotAI):
                     # 적이 날 공격하려 한다면 반대방향으로 튀자..
                     # 무빙샷 구현은 어떻게?
                     if mindist < 6.0:
-                        dest = unit.position - eunit.position + unit.position
+                        dest = unit.position - closest_pos + unit.position
                         actions.append(unit.move(dest))
 
             # 시즈모드 시탱
@@ -435,14 +450,69 @@ class Bot(sc2.BotAI):
                         total_move_vector *= maxdist
                     
                     # 이동!
-                    #actions.append(unit.move(unit.position + total_move_vector))
-                    actions.append(unit.attack(unit.position + total_move_vector))
+                    actions.append(unit.move(unit.position + total_move_vector))
+                    #actions.append(unit.attack(unit.position + total_move_vector))
+
+            # 불곰
+            # 지상 공격만 가능
+            # 해병과 기동력은 비슷하나 중장갑에 쎄다.
+            # 중장갑 위주로 짤라먹는 플레이를 하려면.. 본진 업그레이드로 스팀팩을 업그레이드 해 주어야 한다. 되어 있는 건가?
+            # 위 코드를 보면 되어 있는 것 같기두.. 스팀팩 쓰고 안쓰고의 여부는 위에 이미 구현되어 있음
+            # 우선순위 1. 공성전차를 의료선에 실어서 잡는 방식으로 운용 - 최소 5명 이상(아니면 학습에 맡길까?)
+            # 2. 토르 잡는 데 사용(기동성으로 치고 빠지기). 
+            # 3. 의료선으로 실어서 가거나 무리지어서 몰려가서 커맨드 부시기
+            # 근데 의료선에 타 있다가 내리는 걸 어떻게 detect하지..
+            if unit.tpye_id is UnitTypeId.HELLION:
+
+                check = False
+                
+                # 무언가 목표물이 있어서 이동하거나 공격 중이거나 유휴 상태
+                # 목표물을 찾아, 치고 빠지기 구현
+                if unit.weapon_cooldown < 15:
+
+                    # 시즈탱크
+                    if not check :
+                        query_units = self.known_enemy_units.filter(lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED).sorted(lambda u: u.health + unit.distance_to(u))
+                        if not query_units.empty:
+                            actions.append(unit.attack(query_units.first))
+                            check = True
+                    # 토르
+                    if not check :
+                        query_units = self.known_enemy_units.filter(lambda u: u.type_id is UnitTypeId.THOR or u.type_id is UnitTypeId.THORAP).sorted(lambda u: u.health + unit.distance_to(u))
+                        if not query_units.empty:
+                            actions.append(unit.attack(query_units.first))
+                            check = True
+
+                    # 커맨드
+                    if not check:
+                        actions.append(self.enemy_cc)
+
+                else:
+                    # 무기 쿨타임이 있으므로 약간 후퇴
+                    threats = self.known_enemy_units.filter(lambda u : u.can_attack_ground and u.ground_range >= unit.distance_to(u))
+                    maxdist = 0
+                    for eunit in self.known_enemy_units:
+                        if eunit.can_attack_ground and eunit.ground_range >= unit.distance_to(eunit):
+                            maxdist = max(maxdist, eunit.ground_range - unit.distance_to(eunit))
+                    total_move_vector = Point2((0,0))
+                    for eunit in threats:
+                        move_vector = unit.position - eunit.positon
+                        move_vector /= math.sqrt(move_vector.x*2 + move_vector.y*2)
+                        move_vector *= (eunit.ground_range - unit.distance_to(eunit))*1.5
+                        total_move_vector += move_vector
+                    if not threats.empty:
+                        total_move_vector /= math.sqrt(total_move_vector.x*2 + total_move_vector.y*2)
+                        total_move_vector *= maxdist
+                    
+                    # 이동!
+                    actions.append(unit.move(unit.position + total_move_vector))
+                    #actions.append(unit.attack(unit.position + total_move_vector))
+
 
             
-            # 이제 남은거..
-            # 부대지정을 어떻게 할까..?
-
-
+        # 이제 남은거..
+        # 부대지정을 어떻게 할까..?
+        # 보니까 Units()로 묶어서 데리고 다니는 것 같던디.
         return actions
 
     def on_end(self, game_result):
@@ -456,3 +526,4 @@ class Bot(sc2.BotAI):
                 pickle.dumps(score),
             ))
             self.sock.recv_multipart()
+        

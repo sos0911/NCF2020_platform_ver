@@ -1,3 +1,4 @@
 {
-    "python.pythonPath": "/home/donghyun/anaconda3/envs/sc2/bin/python"
+    "python.pythonPath": "/home/donghyun/anaconda3/envs/sc2/bin/python",
+    "python.linting.enabled": true
 }
