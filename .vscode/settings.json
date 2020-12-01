@@ -1,4 +1,4 @@
 {
-    "python.pythonPath": "/home/donghyun/anaconda3/envs/sc2/bin/python",
+    "python.pythonPath": "D:\\anaconda\\envs\\cuda_learning\\python.exe",
     "python.linting.enabled": true
 }

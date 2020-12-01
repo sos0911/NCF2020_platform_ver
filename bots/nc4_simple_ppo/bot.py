@@ -226,6 +226,8 @@ class Bot(sc2.BotAI):
             else:
                 target = enemy_unit
 
+
+
             if unit.type_id is not UnitTypeId.MEDIVAC:
                 if self.army_strategy is ArmyStrategy.OFFENSE:
                     # 전투가능한 유닛 수가 15를 넘으면 적 본진으로 공격
@@ -280,7 +282,7 @@ class Bot(sc2.BotAI):
 
             # 시즈모드 시탱
             if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
-                 if self.known_enemy_units.exists :
+                if self.known_enemy_units.exists :
                     enemyunits = self.known_enemy_units
                     mindist = 500 # mindist
                     closest_pos = Point2()
@@ -337,24 +339,45 @@ class Bot(sc2.BotAI):
             if unit.type_id is UnitTypeId.VIKINGASSAULT:
                 # 무빙샷이 필요
                 # 한방이 쎈 유닛이다.
-                # 사정거리 내면 치고 빠지기
-                temp = self.known_enemy_units.in_attack_range_of(unit)
-                enemy_flying_unit = temp.flying
-                if enemy_flying_unit.amount > 0:
-                    target = None
-                    targetHP = INF
-                    targetPos = Point2()
-                    for eunit in enemy_flying_unit:
-                        if eunit.health < targetHP:
-                            target = eunit
-                            targetHP = eunit.health
-                            targetPos = eunit.position
+                # 타겟을 정해야 한다.
+                # 우선순위 1. 적의 공중 유닛 중 가장 hp가 적은 놈을 치고 빠지기
+                # 우선순위 2. 1이 해당되는 놈들이 없다면(적의 공중 유닛이 없다면) 탱크 중 가장 hp 없는 놈 바로 아래에 내려서 공격
+                # 우선순위 3. 1,2가 해당되지 않는다면 바로 커맨드로 가서 변환 후 때리기
+
+                if self.army_strategy is ArmyStrategy.OFFENSE:
+                    if unit.weapon_cooldown < 15:
+
+                        first_targets = self.known_enemy_units.filter(lambda u : u.is_flying)
+                        if first_targets.amount > 0:
+                            MinHP = INF
+                            target = first_targets.first
+                            for eunit in first_targets:
+                                if eunit.health < MinHP:
+                                    MinHP = eunit.health
+                                    target = eunit
+                            actions.append(unit.attack(target))
+                        else:
+                            # 우선순위 2로 이행
+                            second_targets = self.known_enemy_units.filter(lambda u : u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
+                                if second_targets.amount > 0:
+                                    MinHP = INF
+                                    target = first_targets.first
+                                    for eunit in first_targets:
+                                        if eunit.health < MinHP:
+                                            MinHP = eunit.health
+                                            target = eunit
+                                    actions.append(unit.attack(target))
+
+
                     
-                    actions.append(unit.attack(target))
-                    # 도망가기
-                    # dir normalize도 있나..?
-                    movdir = unit.position - target.position
-                    actions.append(unit.move(unit.position + movdir*3))
+
+                
+
+                    
+                        
+
+                
+
                 
                 # 커맨드 주위에 아무도 없을 때 변신해서 커맨드 부순다.
                 temp2 = self.known_enemy_structures.in_attack_range_of(unit)
@@ -366,13 +389,17 @@ class Bot(sc2.BotAI):
 
             # 바이킹 전투 모드(지상)
             if unit.type_id is UnitTypeId.VIKINGFIGHTER:
-                # 탱크가 일정 거리 내에 있으면(시즈 모드 거리에) 전투기 변환
+                # 탱크가 일정 거리 내에 있으면(시즈 모드 거리에) 전투기 변환으로 공격 회피
                 enemy_tanks = self.known_enemy_units.filter(lambda u : u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
-                for eunit in enemy_tanks:
-                    if eunit.ground_range >= unit.distance_to(eunit):
-                        actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
-                        break
-               
+                if enemy_tanks.amount > 0:
+                    for eunit in enemy_tanks:
+                        if eunit.ground_range >= unit.distance_to(eunit):
+                            actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
+                            break
+                else:
+                    # 탱크가 없다면 커맨드나 계속 때리자.
+                    actions.append(unit.attack(enemy_cc))
+            
 
 
             # 밴시? 
@@ -389,14 +416,29 @@ class Bot(sc2.BotAI):
                 # 마나가 없거나 들키면 도망간다
                 threats = self.known_enemy_units.filter(lambda u : u.can_attack_air and u.air_range >= unit.distance_to(u))
                 if threats.amount > 0:
+
                     if unit.cloak == CloakState.NotCloaked:
                         actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
                     elif unit.cloak == CloakState.CloakedDetected or unit.energy_percentage < 0.2:
-                        closest_threat = threats.closest_to(unit.position)
-                        dest = (unit.position - closest_threat.position)*3 + unit.position
-                        dest.x = min(dest.x, PixelMap.width)
-                        dest.y = min(dest.y, PixelMap.height)
-                        actions.append(unit.move(dest))
+                        maxdist = 0
+                        for eunit in threats:
+                            maxdist = max(maxdist, eunit.air_range - unit.distance_to(eunit))
+                        total_move_vector = Point2((0,0))
+                        for eunit in threats:
+                            move_vector = unit.position - eunit.positon
+                            move_vector /= (math.sqrt(move_vector.x*2 + move_vector.y*2))
+                            move_vector *= (eunit.ground_range - unit.distance_to(eunit))*1.5
+                            total_move_vector += move_vector
+                            total_move_vector /= math.sqrt(total_move_vector.x*2 + total_move_vector.y*2)
+                            total_move_vector *= maxdist
+                    
+                        # 이동!
+                        actions.append(unit.move(unit.position + total_move_vector))
+                        # closest_threat = threats.closest_to(unit.position)
+                        # dest = (unit.position - closest_threat.position)*3 + unit.position
+                        # dest.x = min(dest.x, PixelMap.width)
+                        # dest.y = min(dest.y, PixelMap.height)
+                        # actions.append(unit.move(dest))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
                 elif threats.amount == 0 and unit.cloak == CloakState.Cloaked:
@@ -442,7 +484,7 @@ class Bot(sc2.BotAI):
                     total_move_vector = Point2((0,0))
                     for eunit in threats:
                         move_vector = unit.position - eunit.positon
-                        move_vector /= math.sqrt(move_vector.x*2 + move_vector.y*2)
+                        move_vector /= (math.sqrt(move_vector.x*2 + move_vector.y*2))
                         move_vector *= (eunit.ground_range - unit.distance_to(eunit))*1.5
                         total_move_vector += move_vector
                     if not threats.empty:
