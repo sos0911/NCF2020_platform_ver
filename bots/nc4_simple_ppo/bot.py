@@ -7,6 +7,8 @@ __author__ = '박현수 (hspark8312@ncsoft.com), NCSOFT Game AI Lab'
 
 import os
 
+from skimage.metrics import normalized_root_mse
+
 os.environ['MKL_DEBUG_CPU_TYPE'] = '5'
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
@@ -104,6 +106,12 @@ class Bot(sc2.BotAI):
         self.army_strategy = ArmyStrategy.DEFENSE
         self.nuclear_strategy = NuclearStrategy.REMAIN
 
+        # 핵 보유량
+        self.has_nuke = False
+        # 맵 size
+        self.map_height = 63
+        self.map_width = 128
+
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 전체 유닛에서 사령부 검색
         # (32.5, 31.5) or (95.5, 31.5)
         if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0:
@@ -137,9 +145,14 @@ class Bot(sc2.BotAI):
             lambda u: u.is_biological and u.health_percentage < 1.0
         )  # 체력이 100% 이하인 유닛 검색
 
-        self.known_enemy_units = self.known_enemy_units()
+        for unit in self.units:
+            if unit.type_id is UnitTypeId.NUKE:
+                self.has_nuke = True
+                break
 
-        self.known_enemy_structures = self.known_enemy_structures()
+        self.cached_known_enemy_units = self.known_enemy_units()
+
+        self.cached_known_enemy_structures = self.known_enemy_structures()
 
         actions += self.train_action()
         actions += self.unit_actions()
@@ -155,9 +168,17 @@ class Bot(sc2.BotAI):
         state[2] = min(1.0, self.vespene / 1000)
         state[3] = min(1.0, self.time / 360)
         state[4] = min(1.0, self.state.score.total_damage_dealt_life / 2500)
-        # 구조물이 아닌 유닛 for문??
+        # 구조물이 아닌 유닛에 대하여..
+        # 예외처리 : 시즈탱크모드나 기타 다른 모드의 유닛일 경우를 핸들링
         for unit in self.units.not_structure:
-            state[5 + EconomyStrategy.to_index[unit.type_id]] += 1
+            unit_type_id = unit.type_id
+            if unit_type_id is UnitTypeId.SIEGETANKSIEGED:
+                unit_type_id = UnitTypeId.SIEGETANK
+            if unit_type_id is UnitTypeId.THORAP:
+                unit_type_id = UnitTypeId.THOR
+            if unit_type_id is UnitTypeId.VIKINGASSAULT:
+                unit_type_id = UnitTypeId.VIKINGFIGHTER
+            state[5 + EconomyStrategy.to_index[unit_type_id]] += 1
         state = state.reshape(1, -1)
 
         # NN
@@ -207,7 +228,9 @@ class Bot(sc2.BotAI):
                 self.evoked[(self.cc.tag, 'train')] = self.time
 
         # 만약 핵을 생산하기로 하였으면, 핵 생산
-        if self.nuclear_strategy == NuclearStrategy.PRODUCE and self.can_afford(UnitTypeId.NUKE):
+        # 미네랄 체크를 해야 하는데, can_afford(nuke)가 먹히지 않는다 ㅠㅠㅠ
+        #if self.nuclear_strategy == NuclearStrategy.PRODUCE and self.can_afford(UnitTypeId.NUKE):
+        if self.nuclear_strategy == NuclearStrategy.PRODUCE and not self.has_nuke:
             actions.append(self.cc(AbilityId.BUILD_NUKE))
 
         return actions
@@ -220,8 +243,8 @@ class Bot(sc2.BotAI):
         for unit in self.units.not_structure:  # 건물이 아닌 유닛만 선택
             enemy_unit = self.enemy_start_locations[0]
             # 알려진 enemy unit이 존재한다면?
-            if self.known_enemy_units.exists:
-                enemy_unit = self.known_enemy_units.closest_to(unit)  # 가장 가까운 적 유닛
+            if self.cached_known_enemy_units.exists:
+                enemy_unit = self.cached_known_enemy_units.closest_to(unit)  # 가장 가까운 적 유닛
             # 적 사령부와 가장 가까운 적 유닛중 더 가까운 것을 목표로 설정
             if unit.distance_to(self.enemy_cc) < unit.distance_to(enemy_unit):
                 target = self.enemy_cc
@@ -260,9 +283,9 @@ class Bot(sc2.BotAI):
             # 시즈탱크라면?
             if unit.type_id is UnitTypeId.SIEGETANK:
                 # 적이 보이고 사정거리 내에 있는데 붙어 있지 않으면 바로 시즈모드
-                if self.known_enemy_units.exists:
+                if self.cached_known_enemy_units.exists:
                     # 시즈탱크가 공격 가능한 지상 유닛이어야 함
-                    enemy_ground_units = self.known_enemy_units.not_flying
+                    enemy_ground_units = self.cached_known_enemy_units.not_flying
                     mindist = 500  # mindist
                     closest_pos = Point2()
                     for eunit in enemy_ground_units:
@@ -282,8 +305,8 @@ class Bot(sc2.BotAI):
 
             # 시즈모드 시탱
             if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
-                if self.known_enemy_units.exists:
-                    enemyunits = self.known_enemy_units
+                if self.cached_known_enemy_units.exists:
+                    enemyunits = self.cached_known_enemy_units
                     mindist = 500  # mindist
                     closest_pos = Point2()
                     for eunit in enemyunits:
@@ -305,7 +328,7 @@ class Bot(sc2.BotAI):
             # THOR(폭약), THORAP(고폭탄)
             if unit.type_id is UnitTypeId.THOR:
                 # 전투순양함이 사거리 내에 들어오면 바로 고폭탄 모드로 변경
-                enemy_inrange_units = self.known_enemy_units.in_attack_range_of(unit)
+                enemy_inrange_units = self.cached_known_enemy_units.in_attack_range_of(unit)
                 for eunit in enemy_inrange_units:
                     if eunit.type_id is UnitTypeId.BATTLECRUISER:
                         actions.append(unit(AbilityId.MORPH_THORHIGHIMPACTMODE))
@@ -313,7 +336,7 @@ class Bot(sc2.BotAI):
 
             if unit.type_id is UnitTypeId.THORAP:
                 # 전투순양함이 시야나 사거리 내에서 사라지면 다시 디폴트로 변경
-                enemy_inrange_units = self.known_enemy_units.in_attack_range_of(unit)
+                enemy_inrange_units = self.cached_known_enemy_units.in_attack_range_of(unit)
                 batcheck = False
                 # 사정거리 내 배틀크루저 중 가장 hp가 적은 놈을 집중사격
                 closest_battle = None
@@ -345,7 +368,7 @@ class Bot(sc2.BotAI):
                 if self.army_strategy is ArmyStrategy.OFFENSE:
                     if unit.weapon_cooldown < 15:
 
-                        first_targets = self.known_enemy_units.filter(lambda u: u.is_flying)
+                        first_targets = self.cached_known_enemy_units.filter(lambda u: u.is_flying)
                         if first_targets.amount > 0:
                             MinHP = INF
                             target = first_targets.first
@@ -356,7 +379,7 @@ class Bot(sc2.BotAI):
                             actions.append(unit.attack(target))
                         else:
                             # 우선순위 2로 이행
-                            second_targets = self.known_enemy_units.filter(
+                            second_targets = self.cached_known_enemy_units.filter(
                                 lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
                             if second_targets.amount > 0:
                                 MinHP = INF
@@ -372,7 +395,7 @@ class Bot(sc2.BotAI):
                                 # 우선순위 3으로 이행
                                 # 커맨드 주위에 공중 유닛인 자신에게 위협이 없으면 변환 후 부신다.
 
-                                threats = self.known_enemy_units.filter(
+                                threats = self.cached_known_enemy_units.filter(
                                     lambda u: u.can_attack_air and u.air_range >= unit.distance_to(u))
                                 if threats.amount == 0:
                                     actions.append(unit.attack(self.enemy_cc))
@@ -383,19 +406,19 @@ class Bot(sc2.BotAI):
                     else:
                         # 무기 쿨타임
                         # 어차피 못쏘므로 피하자.
-                        threats = self.known_enemy_units.filter(
+                        threats = self.cached_known_enemy_units.filter(
                             lambda u: u.can_attack_air and u.air_range >= unit.distance_to(u))
                         maxdist = 0
                         for eunit in threats:
                             maxdist = max(maxdist, eunit.air_range - unit.distance_to(eunit))
                         total_move_vector = Point2((0, 0))
                         for eunit in threats:
-                            move_vector = unit.position - eunit.positon
-                            move_vector /= (math.sqrt(move_vector.x * 2 + move_vector.y * 2))
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
                             move_vector *= (eunit.ground_range - unit.distance_to(eunit)) * 1.5
                             total_move_vector += move_vector
                         if not threats.empty:
-                            total_move_vector /= math.sqrt(total_move_vector.x * 2 + total_move_vector.y * 2)
+                            total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
                             total_move_vector *= maxdist
 
                         # 이동!
@@ -404,7 +427,7 @@ class Bot(sc2.BotAI):
             # 바이킹 전투 모드(지상)
             if unit.type_id is UnitTypeId.VIKINGFIGHTER:
                 # 탱크가 일정 거리 내에 있으면(시즈 모드 거리에) 전투기 변환으로 공격 회피
-                enemy_tanks = self.known_enemy_units.filter(
+                enemy_tanks = self.cached_known_enemy_units.filter(
                     lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
                 if enemy_tanks.amount > 0:
                     for eunit in enemy_tanks:
@@ -421,14 +444,15 @@ class Bot(sc2.BotAI):
             if unit.type_id is UnitTypeId.BANSHEE:
                 # 마나를 조금 채우고 움직인다.
                 if unit.energy_percentage >= 0.5:
-                    enemy_tanks = self.known_enemy_units.filter(
+                    enemy_tanks = self.cached_known_enemy_units.filter(
                         lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
-                    target = enemy_tanks.closest_to(unit.position)
-                    actions.append(unit.attack(target))
+                    if enemy_tanks.amount > 0:
+                        target = enemy_tanks.closest_to(unit.position)
+                        actions.append(unit.attack(target))
 
                 # 만약 주위에 자신을 공격 가능한 유닛이 있다면 클로킹에 들어간다.
                 # 마나가 없거나 들키면 도망간다
-                threats = self.known_enemy_units.filter(
+                threats = self.cached_known_enemy_units.filter(
                     lambda u: u.can_attack_air and u.air_range >= unit.distance_to(u))
                 if threats.amount > 0:
 
@@ -440,19 +464,19 @@ class Bot(sc2.BotAI):
                             maxdist = max(maxdist, eunit.air_range - unit.distance_to(eunit))
                         total_move_vector = Point2((0, 0))
                         for eunit in threats:
-                            move_vector = unit.position - eunit.positon
-                            move_vector /= (math.sqrt(move_vector.x * 2 + move_vector.y * 2))
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
                             move_vector *= (eunit.ground_range - unit.distance_to(eunit)) * 1.5
                             total_move_vector += move_vector
-                            total_move_vector /= math.sqrt(total_move_vector.x * 2 + total_move_vector.y * 2)
+                            total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
                             total_move_vector *= maxdist
 
                         # 이동!
                         actions.append(unit.move(unit.position + total_move_vector))
                         # closest_threat = threats.closest_to(unit.position)
                         # dest = (unit.position - closest_threat.position)*3 + unit.position
-                        # dest.x = min(dest.x, PixelMap.width)
-                        # dest.y = min(dest.y, PixelMap.height)
+                        # dest.x = min(dest.x, self.map_width)
+                        # dest.y = min(dest.y, self.map_height)
                         # actions.append(unit.move(dest))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
@@ -466,14 +490,14 @@ class Bot(sc2.BotAI):
             # 때리더라도 일직선으로 나가기에, 그 안에 최대한 많이 애들을 집어넣어 때리는게 중요
             # 근데 그걸 구현을 어떻게 하지 ㅋㅋㅋ
             # 근처에 없으면 그냥 가까이 있는 지상유닛 아무나 때린다.
-            if unit.tpye_id is UnitTypeId.HELLION:
+            if unit.type_id is UnitTypeId.HELLION:
                 # 정찰을 가본다. 기본적으로는 상대 cc로
                 # cc를 이미 비추고 있는 유닛이 있다면 랜덤으로 다른 곳으로 가본다.
                 # 가다가 지상유닛 누군가를 만나면 그 중 경장갑 위주로 때리기. 
                 if not unit.is_moving and not unit.is_attacking:
                     if self.is_visible(self.enemy_cc):
                         actions.append(unit.attack(
-                            Point2((random.randint(0, PixelMap.width), random.randint(0, PixelMap.height)))))
+                            Point2((random.randint(0, self.map_width), random.randint(0, self.map_height)))))
                     else:
                         # 커맨드 invisible이면 우선 보이게 하는 것이 목적
                         actions.append(unit.move(self.enemy_cc))
@@ -483,33 +507,33 @@ class Bot(sc2.BotAI):
                 # 단위가 frame
                 if unit.weapon_cooldown < 15:
                     target = None
-                    min_dist = math.sqrt(PixelMap.height * 2 + PixelMap.width * 2) + 10
-                    for eunit in self.known_enemy_units:
-                        if eunit.visible and eunit.is_light and target.distance_to(unit) < min_dist:
+                    min_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2) + 10
+                    for eunit in self.cached_known_enemy_units:
+                        if eunit.is_visible and eunit.is_light and eunit.distance_to(unit) < min_dist:
                             target = eunit
-                            min_dist = target.distance_to(unit)
+                            min_dist = eunit.distance_to(unit)
                     if target is not None:
                         actions.append(unit.attack(target))
                 else:
-                    threats = self.known_enemy_units.filter(
+                    threats = self.cached_known_enemy_units.filter(
                         lambda u: u.can_attack_ground and u.ground_range >= unit.distance_to(u))
                     maxdist = 0
-                    for eunit in self.known_enemy_units:
+                    for eunit in self.cached_known_enemy_units:
                         if eunit.can_attack_ground and eunit.ground_range >= unit.distance_to(eunit):
                             maxdist = max(maxdist, eunit.ground_range - unit.distance_to(eunit))
                     total_move_vector = Point2((0, 0))
+                    # 벡터 노말라이즈 메서드가 없나?
                     for eunit in threats:
-                        move_vector = unit.position - eunit.positon
-                        move_vector /= (math.sqrt(move_vector.x * 2 + move_vector.y * 2))
+                        move_vector = unit.position - eunit.position
+                        move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
                         move_vector *= (eunit.ground_range - unit.distance_to(eunit)) * 1.5
                         total_move_vector += move_vector
                     if not threats.empty:
-                        total_move_vector /= math.sqrt(total_move_vector.x * 2 + total_move_vector.y * 2)
+                        total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
                         total_move_vector *= maxdist
-
-                    # 이동!
-                    actions.append(unit.move(unit.position + total_move_vector))
-                    # actions.append(unit.attack(unit.position + total_move_vector))
+                        # 이동!
+                        actions.append(unit.move(unit.position + total_move_vector))
+                        # actions.append(unit.attack(unit.position + total_move_vector))
 
             # 불곰
             # 지상 공격만 가능
@@ -520,7 +544,7 @@ class Bot(sc2.BotAI):
             # 2. 토르 잡는 데 사용(기동성으로 치고 빠지기). 
             # 3. 의료선으로 실어서 가거나 무리지어서 몰려가서 커맨드 부시기
             # 근데 의료선에 타 있다가 내리는 걸 어떻게 detect하지..
-            if unit.tpye_id is UnitTypeId.HELLION:
+            if unit.type_id is UnitTypeId.HELLION:
 
                 check = False
 
@@ -530,7 +554,7 @@ class Bot(sc2.BotAI):
 
                     # 시즈탱크
                     if not check:
-                        query_units = self.known_enemy_units.filter(lambda
+                        query_units = self.cached_known_enemy_units.filter(lambda
                                                                         u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED).sorted(
                             lambda u: u.health + unit.distance_to(u))
                         if not query_units.empty:
@@ -538,7 +562,7 @@ class Bot(sc2.BotAI):
                             check = True
                     # 토르
                     if not check:
-                        query_units = self.known_enemy_units.filter(
+                        query_units = self.cached_known_enemy_units.filter(
                             lambda u: u.type_id is UnitTypeId.THOR or u.type_id is UnitTypeId.THORAP).sorted(
                             lambda u: u.health + unit.distance_to(u))
                         if not query_units.empty:
@@ -547,24 +571,24 @@ class Bot(sc2.BotAI):
 
                     # 커맨드
                     if not check:
-                        actions.append(self.enemy_cc)
+                        actions.append(unit.attack(self.enemy_cc))
 
                 else:
                     # 무기 쿨타임이 있으므로 약간 후퇴
-                    threats = self.known_enemy_units.filter(
+                    threats = self.cached_known_enemy_units.filter(
                         lambda u: u.can_attack_ground and u.ground_range >= unit.distance_to(u))
                     maxdist = 0
-                    for eunit in self.known_enemy_units:
+                    for eunit in self.cached_known_enemy_units:
                         if eunit.can_attack_ground and eunit.ground_range >= unit.distance_to(eunit):
                             maxdist = max(maxdist, eunit.ground_range - unit.distance_to(eunit))
                     total_move_vector = Point2((0, 0))
                     for eunit in threats:
-                        move_vector = unit.position - eunit.positon
-                        move_vector /= math.sqrt(move_vector.x * 2 + move_vector.y * 2)
+                        move_vector = unit.position - eunit.position
+                        move_vector /= math.sqrt(move_vector.x ** 2 + move_vector.y ** 2)
                         move_vector *= (eunit.ground_range - unit.distance_to(eunit)) * 1.5
                         total_move_vector += move_vector
                     if not threats.empty:
-                        total_move_vector /= math.sqrt(total_move_vector.x * 2 + total_move_vector.y * 2)
+                        total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
                         total_move_vector *= maxdist
 
                     # 이동!

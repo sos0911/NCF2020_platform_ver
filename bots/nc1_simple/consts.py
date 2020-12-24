@@ -40,7 +40,7 @@ for idx, strategy in enumerate(EconomyStrategy):
 
 
 class ArmyStrategy(Enum):
-    DEFENSE = 0 
+    DEFENSE = 0
     OFFENSE = 1
 
 class NuclearStrategy(Enum):

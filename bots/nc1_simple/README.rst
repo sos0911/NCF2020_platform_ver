@@ -1,5 +1,5 @@
 
-예제 1. Simple
+예제 1. Simple AI(test version of microaction)
 ==================
 
 Dummy에서는 AI를 구현하는 가장 간단한 방법에 대해 살펴보았다.
