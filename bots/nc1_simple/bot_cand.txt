@@ -1,0 +1,733 @@
+__author__ = '박현수 (hspark8312@ncsoft.com), NCSOFT Game AI Lab'
+
+# python -m bots.nc_example_v5.bot --server=172.20.41.105
+# kill -9 $(ps ax | grep SC2_x64 | fgrep -v grep | awk '{ print $1 }')
+# kill -9 $(ps ax | grep bots.nc_example_v5.bot | fgrep -v grep | awk '{ print $1 }')
+# ps aux
+
+import os
+
+from skimage.metrics import normalized_root_mse
+
+os.environ['MKL_DEBUG_CPU_TYPE'] = '5'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+
+import pathlib
+import pickle
+import time
+import math
+
+import nest_asyncio
+import numpy as np
+import sc2
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from IPython import embed
+from sc2.data import Result
+from sc2.data import CloakState
+from sc2.ids.ability_id import AbilityId
+from sc2.ids.buff_id import BuffId
+from sc2.ids.unit_typeid import UnitTypeId
+from sc2.player import Bot as _Bot
+from sc2.position import Point2
+from termcolor import colored, cprint
+from sc2.pixel_map import PixelMap
+import random
+
+# .을 const 앞에 왜 찍는 거지?
+from .consts import ArmyStrategy, CommandType, EconomyStrategy, NuclearStrategy
+
+INF = 1e9
+
+nest_asyncio.apply()
+
+
+class Bot(sc2.BotAI):
+    """
+    해병 5, 의료선 1 빌드오더를 계속 실행하는 봇
+    해병은 적 사령부와 유닛중 가까운 목표를 향해 각자 이동
+    적 유닛또는 사령부까지 거리가 15미만이 될 경우 스팀팩 사용
+    스팀팩은 체력이 50% 이상일 때만 사용가능
+    의료선은 가장 가까운 체력이 100% 미만인 해병을 치료함 ㅎ
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.build_order = list() # 생산할 유닛 목록
+
+    def on_start(self):
+        """
+        새로운 게임마다 초기화
+        """
+        self.build_order = list()
+        self.evoked = dict()
+
+        self.economy_strategy = EconomyStrategy.MARINE.value
+        self.army_strategy = ArmyStrategy.DEFENSE
+        self.nuclear_strategy = NuclearStrategy.REMAIN
+
+        # 핵 보유량
+        self.has_nuke = False
+        # 맵 size
+        self.map_height = 63
+        self.map_width = 128
+
+        self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 전체 유닛에서 사령부 검색
+        # (32.5, 31.5) or (95.5, 31.5)
+        if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0:
+            # self.enemy_cc = self.enemy_start_locations[0]  # 적 시작 위치
+            self.enemy_cc = Point2(Point2((95.5, 31.5)))  # 적 시작 위치
+        else:
+            self.enemy_cc = Point2(Point2((32.5, 31.5)))  # 적 시작 위치
+
+        # # 디버깅
+        # self.minerals = 3000
+        # self.vespene = 3000
+
+
+    async def on_step(self, iteration: int):       
+        actions = list()
+
+        # set info
+        self.combat_units = self.units.exclude_type(
+            [UnitTypeId.COMMANDCENTER, UnitTypeId.MEDIVAC, UnitTypeId.MULE]
+        )
+        self.wounded_units = self.units.filter(
+            lambda u: u.is_biological and u.health_percentage < 1.0
+        )  # 체력이 100% 이하인 유닛 검색
+
+        for unit in self.units:
+            if unit.type_id is UnitTypeId.NUKE:
+                self.has_nuke = True
+                break
+
+        self.cached_known_enemy_units = self.known_enemy_units()
+
+        self.cached_known_enemy_structures = self.known_enemy_structures()
+
+        #actions += self.train_action()
+        actions += self.unit_actions()
+        await self.do_actions(actions)
+
+    def train_action(self):
+        pass
+
+    # clamp function
+    def clamp(self, num, min_value, max_value):
+        return max(min(num, max_value), min_value)
+
+    def unit_actions(self):
+        #
+        # 유닛 명령 생성
+        #
+        actions = list()
+        for unit in self.units.not_structure:  # 건물이 아닌 유닛만 선택
+            enemy_unit = self.enemy_start_locations[0]
+            # 알려진 enemy unit이 존재한다면?
+            if self.cached_known_enemy_units.exists:
+                enemy_unit = self.cached_known_enemy_units.closest_to(unit)  # 가장 가까운 적 유닛
+            # 적 사령부와 가장 가까운 적 유닛중 더 가까운 것을 목표로 설정
+            if unit.distance_to(self.enemy_cc) < unit.distance_to(enemy_unit):
+                target = self.enemy_cc
+            else:
+                target = enemy_unit
+
+
+            if unit.type_id is not UnitTypeId.MEDIVAC:
+                # if self.army_strategy is ArmyStrategy.OFFENSE:
+                #     # 전투가능한 유닛 수가 15를 넘으면 적 본진으로 공격
+                #     actions.append(unit.attack(target))
+                # else:  # ArmyStrategy.DEFENSE
+                #     # 적 사령부 방향에 유닛 집결
+                #     target = self.start_location + 0.25 * (self.enemy_cc.position - self.start_location)
+                #     actions.append(unit.attack(target))
+
+                if unit.type_id in (UnitTypeId.MARINE, UnitTypeId.MARAUDER):
+                    if self.army_strategy is ArmyStrategy.OFFENSE and unit.distance_to(target) < 15:
+                        # 유닛과 목표의 거리가 15이하일 경우 스팀팩 사용
+                        if not unit.has_buff(BuffId.STIMPACK) and unit.health_percentage > 0.5:
+                            # 현재 스팀팩 사용중이 아니며, 체력이 50% 이상
+                            if self.time - self.evoked.get((unit.tag, AbilityId.EFFECT_STIM), 0) > 1.0:
+                                # 1초 이전에 스팀팩을 사용한 적이 없음
+                                actions.append(unit(AbilityId.EFFECT_STIM))
+                                self.evoked[(unit.tag, AbilityId.EFFECT_STIM)] = self.time
+
+            # 자기가 수송선일 때..
+            if unit.type_id is UnitTypeId.MEDIVAC:
+                if self.wounded_units.exists:
+                    wounded_unit = self.wounded_units.closest_to(unit)  # 가장 가까운 체력이 100% 이하인 유닛
+                    actions.append(unit(AbilityId.MEDIVACHEAL_HEAL, wounded_unit))  # 유닛 치료 명령
+                else:
+                    # 회복시킬 유닛이 없으면, 전투 그룹 중앙에서 대기
+                    if self.combat_units.exists:
+                        actions.append(unit.move(self.combat_units.center))
+
+            # 시즈탱크라면?
+            if unit.type_id is UnitTypeId.SIEGETANK:
+                # 먼저 타겟부터 정하자.
+                # 적이 보이고 사정거리 내에 있는데 붙어 있지 않으면 바로 시즈모드
+                if self.cached_known_enemy_units.exists:
+                    # 시즈탱크가 공격 가능한 지상 유닛이어야 함
+                    enemy_ground_units = self.cached_known_enemy_units.filter(lambda u: not u.is_flying)
+                    mindist = 500  # mindist
+                    closest_pos = Point2()
+                    for eunit in enemy_ground_units:
+                        # 각 적 유닛간의 거리 조사
+                        if mindist > unit.distance_to(eunit):
+                            mindist = unit.distance_to(eunit)
+                            closest_pos = eunit.position
+                    # 너무 멀다면 전진배치.
+                    # 그룹 뒤에 탱크를 놓는 것은 12/31일 논의.
+
+                    threats = self.cached_known_enemy_units.filter(
+                        lambda u: u.can_attack_ground and u.ground_range + 1 >= unit.distance_to(u))
+
+                    if mindist > 13.0 and mindist < 500:
+                        actions.append(unit.attack(closest_pos))
+                    # 적정 거리에 들어왔다면 시즈모드.
+                    elif mindist > 9.0 and mindist <= 13.0 and threats.empty:
+                        actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
+                    # 적이 날 공격하려 한다면 반대방향으로 튀자..
+                    # 무빙샷 구현
+                    if not threats.empty:
+                        if unit.weapon_cooldown < 3:
+                            target = None
+                            min_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2) + 10
+                            for eunit in self.cached_known_enemy_units:
+                                if eunit.is_visible and not eunit.is_flying and eunit.distance_to(unit) < min_dist:
+                                    # 이때는 탱크에 달라붙는 애들을 우선적으로 처리
+                                    # 가장 가까운 놈으로
+                                    target = eunit
+                                    min_dist = eunit.distance_to(unit)
+                            if target is not None:
+                                actions.append(unit.attack(target))
+                        else:
+                            # 쿨타임이 돌지 않으므로 도망간다.
+                            # 나와있는 ground_range에 0.7쯤 더해야 실제 사정거리가 된다..
+                            # 넉넉잡아 1로..
+                            maxrange = 0
+                            for eunit in self.cached_known_enemy_units:
+                                if eunit.can_attack_ground and eunit.ground_range + 1 >= unit.distance_to(eunit):
+                                    maxrange = max(maxrange, eunit.ground_range + 1)
+                            total_move_vector = Point2((0, 0))
+                            # 벡터 노말라이즈 메서드가 없나?
+                            for eunit in threats:
+                                move_vector = unit.position - eunit.position
+                                move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                                move_vector *= (eunit.ground_range + 1 - unit.distance_to(eunit)) * 1.5
+                                total_move_vector += move_vector
+                            if not threats.empty:
+                                total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                                total_move_vector *= maxrange
+                                # 이동!
+                                dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                               self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                                actions.append(unit.move(dest))
+
+                # 보이는 게 하나도 없으면 커맨드로 달려간다.
+                else:
+                    actions.append(unit.attack(self.enemy_cc))
+
+
+            # 시즈모드 시탱
+            if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
+                if self.cached_known_enemy_units.exists:
+                    # 타겟팅 정하기
+                    targets = self.cached_known_enemy_units.in_attack_range_of(unit)
+                    min_HP = 1e9
+                    for eunit in targets:
+                        if eunit.is_visible and not eunit.is_flying and eunit.health < min_HP:
+                            # 중장갑 위주 + HP 적은놈
+                            if target is not None and target.is_armored and not eunit.is_armored:
+                                continue
+                            target = eunit
+                            min_HP = eunit.health
+                    if target is not None:
+                        actions.append(unit.attack(target))
+
+                    # 시즈모드 풀지 안풀지 결정하기
+                    # 나와있는 ground_range에 0.7쯤 더해야 실제 사정거리가 된다..
+                    # 넉넉잡아 1로..
+                    threats = self.cached_known_enemy_units.filter(
+                        lambda u: u.can_attack_ground and u.ground_range + 1 >= unit.distance_to(u))
+                    # 한 유닛이라도 자신을 때릴 수 있으면 바로 시즈모드 해제
+                    if threats.amount > 0:
+                        actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+
+                # 보이는 애들이 없으면 다시 시즈모드를 푼다.
+                else:
+                    actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+
+
+            # 사신은 쓰지 않을 것이므로 제외
+            # 훈련 풀에서 아예 제외시키는 것도 생각해야..
+
+            # 토르
+            # default는 폭약 모드(경장갑)
+            # morph로 고폭탄 모드로 변경 가능
+            # THOR(폭약), THORAP(고폭탄)
+            if unit.type_id is UnitTypeId.THOR:
+                # 경장갑 추가피해이므로 공중 경장갑 위주로 타격
+                # 밤까마귀, 밴시 상대
+                # 스플래시 판정 -> 많이 모여 있는 곳을 때리는 게 낫다.
+                # 스플래시 범위 0.5
+                splash_range = 0.5
+
+                enemy_flying_unit = self.cached_known_enemy_units.filter(lambda u: u.is_flying)
+
+                # 아예 적의 알려진 유닛이 없다면 커맨드 부시러 간다.
+                if self.cached_known_enemy_units.empty:
+                    actions.append(unit.attack(self.enemy_cc))
+                else:
+                    # 무기 쿨다운이 얼마 남지 않았을 때
+                    # 각 적 공중유닛 주위의 공중유닛들을 세서 점수를 매긴다.
+                    if unit.weapon_cooldown < 15:
+                        best_score = 0
+                        target = None
+                        for eunit in enemy_flying_unit:
+                            light_count = 0 if eunit.is_armored else 1
+                            heavy_count = 0 if eunit.is_light else 1
+                            for other in enemy_flying_unit:
+                                if eunit.tag != other.tag and eunit.distance_to(other) < splash_range:
+                                    if other.is_light:
+                                        light_count += 1
+                                    elif other.is_armored:
+                                        heavy_count += 1
+                            score = light_count*2 + heavy_count
+                            # 거리가 가까우고 먼 것도 점수에 넣을까..
+                            if score > best_score:
+                                best_score = score
+                                target = eunit
+                        # 가장 점수가 높았던 놈을 공격
+                        # target=none이면 지상 유닛 중 가까운 놈 공격
+                        if target is None:
+                            min_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2) + 10
+                            for eunit in self.cached_known_enemy_units:
+                                if eunit.is_visible and eunit.distance_to(unit) < min_dist:
+                                    target = eunit
+                                    min_dist = eunit.distance_to(unit)
+
+                        actions.append(unit.attack(target))
+
+                    # 유닛 자체는 느리나 사거리가 뛰어나다.
+                    # 무빙샷 구현 필요
+                    else:
+                        # 나와있는 ground_range에 0.7쯤 더해야 실제 사정거리가 된다..
+                        # 넉넉잡아 1로..
+                        threats = self.cached_known_enemy_units.filter(lambda u: u.can_attack_ground and u.ground_range + 1 >= unit.distance_to(u))
+                        maxrange = 0
+                        for eunit in self.cached_known_enemy_units:
+                            if eunit.can_attack_ground and eunit.ground_range + 1 >= unit.distance_to(eunit):
+                                maxrange = max(maxrange, eunit.ground_range + 1)
+                        total_move_vector = Point2((0, 0))
+                        # 벡터 노말라이즈 메서드가 없나?
+                        for eunit in threats:
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.ground_range + 1 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        if not threats.empty:
+                            total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                            total_move_vector *= maxrange
+                            # 이동!
+                            dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                           self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                            actions.append(unit.move(dest))
+
+
+                # 전투순양함이나 공중모드 바이킹이 사거리 내에 들어오면 바로 고폭탄 모드로 변경
+                enemy_inrange_units = self.cached_known_enemy_units.in_attack_range_of(unit)
+                for eunit in enemy_inrange_units:
+                    if eunit.type_id is UnitTypeId.BATTLECRUISER or eunit.type_id is UnitTypeId.VIKINGFIGHTER:
+                        actions.append(unit(AbilityId.MORPH_THORHIGHIMPACTMODE))
+                        break
+
+            if unit.type_id is UnitTypeId.THORAP:
+                # 전투순양함이나 바이킹이 시야나 사거리 내에서 사라지면 다시 디폴트로 변경
+                # 이 모드에서는 무조건 전투순양함, 바이킹을 때리기
+                enemy_inrange_units = self.cached_known_enemy_units.in_attack_range_of(unit)
+                enemy_flying_heavy = enemy_inrange_units.filter(lambda u: u.is_armored)
+                print("weapon cooldown : ", unit.weapon_cooldown)
+                # 사정거리 내 전투순양함이나 바이킹 중 가장 hp가 적은 놈을 집중사격
+                target = None
+                target_minHP = INF
+                for eunit in enemy_flying_heavy:
+                    if target_minHP > eunit.health:
+                        target_minHP = eunit.health
+                        target = eunit
+                if target is None:
+                    actions.append(unit(AbilityId.MORPH_THOREXPLOSIVEMODE))
+                else:
+                    if unit.weapon_cooldown < 3:
+                        actions.append(unit.attack(target))
+                    else:
+                        # 나와있는 ground_range에 0.7쯤 더해야 실제 사정거리가 된다..
+                        # 넉넉잡아 1로..
+                        threats = self.cached_known_enemy_units.filter(
+                            lambda u: u.can_attack_ground and u.ground_range + 1 >= unit.distance_to(u))
+
+                        for eunit in self.cached_known_enemy_units:
+                            print(eunit.name, " :: ", eunit.ground_range + 1, " ", unit.distance_to(eunit))
+
+                        maxrange = 0
+                        for eunit in self.cached_known_enemy_units:
+                            if eunit.can_attack_ground and eunit.ground_range + 1 >= unit.distance_to(eunit):
+                                maxrange = max(maxrange, eunit.ground_range + 1)
+                        total_move_vector = Point2((0, 0))
+                        # 벡터 노말라이즈 메서드가 없나?
+                        for eunit in threats:
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.ground_range + 1 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        if not threats.empty:
+                            total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                            total_move_vector *= maxrange
+                            # 이동!
+                            dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                           self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                            actions.append(unit.move(dest))
+
+            # 토르가 공성전차에겐 약하다.. 이속이 느려서
+            # 이것에 대한 코드도 추가예정
+
+            # 바이킹 전투기 모드(공중)
+            if unit.type_id is UnitTypeId.VIKINGFIGHTER:
+                # 무빙샷이 필요
+                # 한방이 쎈 유닛이다.
+                # 타겟을 정해야 한다.
+                # 우선순위 1. 적의 공중 유닛 중 가장 hp가 적은 놈을 치고 빠지기
+                # 우선순위 2. 1이 해당되는 놈들이 없다면(적의 공중 유닛이 없다면) 탱크 중 가장 hp 없는 놈 바로 아래에 내려서 공격
+                # 탱크가 없다면 주위 임의의 지상 유닛을 때린다.
+                # 우선순위 3. 1,2가 해당되지 않는다면 바로 커맨드로 가서 변환 후 때리기
+
+                threats = self.cached_known_enemy_units.filter(
+                    lambda u: u.can_attack_air and u.air_range + 1 >= unit.distance_to(u))
+
+                if unit.weapon_cooldown < 15:
+
+                    first_targets = self.cached_known_enemy_units.filter(lambda u: u.is_flying)
+                    if first_targets.amount > 0:
+                        MinHP = INF
+                        target = first_targets.first
+                        for eunit in first_targets:
+                            if eunit.health < MinHP:
+                                MinHP = eunit.health
+                                target = eunit
+                        actions.append(unit.attack(target))
+                    else:
+                        # 우선순위 2로 이행
+                        second_targets = self.cached_known_enemy_units.filter(
+                            lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
+                        if second_targets.amount > 0:
+                            MinHP = INF
+                            target = None
+                            for eunit in second_targets:
+                                if eunit.health < MinHP:
+                                    MinHP = eunit.health
+                                    target = eunit
+                            actions.append(unit.move(target))
+                            actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
+                            actions.append(unit.attack(target))
+                        else:
+                            # 탱크가 없으므로 보이는 지상 유닛이 있다면 가장 HP가 없는 걸 때리기
+                            targets = self.cached_known_enemy_units.filter(lambda u: unit.sight_range > unit.distance_to(u))
+                            if not targets.empty:
+                                MinHP = INF
+                                target = None
+                                for eunit in targets:
+                                    if eunit.health < MinHP:
+                                        MinHP = eunit.health
+                                        target = eunit
+                                actions.append(unit.move(target))
+                                actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
+                                actions.append(unit.attack(target))
+
+                            else:
+                                # 우선순위 3으로 이행
+                                # 보이는 공중 유닛, 지상 유닛 아무도 없음
+                                # 커맨드를 때리러 간다.
+                                actions.append(unit.attack(self.enemy_cc))
+
+                else:
+                    # 무기 쿨타임
+                    # 어차피 못쏘므로 피하자.
+                    maxrange = 0
+                    for eunit in threats:
+                        maxrange = max(maxrange, eunit.air_range + 1)
+                    total_move_vector = Point2((0, 0))
+                    # 벡터 노말라이즈 메서드가 없나?
+                    for eunit in threats:
+                        move_vector = unit.position - eunit.position
+                        move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                        move_vector *= (eunit.ground_range + 1 - unit.distance_to(eunit)) * 1.5
+                        total_move_vector += move_vector
+                    if not threats.empty:
+                        total_move_vector /= math.sqrt(
+                            total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                        total_move_vector *= maxrange
+                        # 이동!
+                        dest = Point2(
+                            (self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                             self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                        actions.append(unit.move(dest))
+
+            # 바이킹 전투 모드(지상)
+            if unit.type_id is UnitTypeId.VIKINGASSAULT:
+                # 탱크의 사정거리 내에 있으면(시즈 모드 거리에) 전투기 변환으로 공격 회피
+                enemy_tanks = self.cached_known_enemy_units.filter(
+                    lambda u: u.type_id is (UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED) and
+                    unit.distance_to(u) < u.ground_range + 1)
+                if enemy_tanks.amount > 0:
+                    for eunit in enemy_tanks:
+                        if eunit.ground_range + 1 >= unit.distance_to(eunit):
+                            actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
+                            break
+
+                # 주위에 공중 유닛이 있다면 전투기로 변환하여 공격
+                targets = self.cached_known_enemy_units.filter(lambda u: u.is_flying and unit.sight_range > unit.distance_to(u))
+                if not targets.empty:
+                    MinHP = INF
+                    target = None
+                    for eunit in targets:
+                        if eunit.health < MinHP:
+                            MinHP = eunit.health
+                            target = eunit
+                    actions.append(unit.move(target))
+                    actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
+                    actions.append(unit.attack(target))
+
+                else:
+                    # 아무도 없으면 커맨드, 사정거리 내 지상유닛 누군가가 보인다면 그놈을 조지자
+                    ground_units = self.cached_known_enemy_units.not_flying
+                    targets = ground_units.in_attack_range_of(unit)
+                    MinHP = INF
+                    target = None
+                    for eunit in targets:
+                        if eunit.health < MinHP:
+                            MinHP = eunit.health
+                            target = eunit
+                    if target is not None:
+                        actions.append(unit.attack(target))
+                    else:
+                        actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
+                        actions.append(unit.attack(self.enemy_cc))
+
+            # 밴시
+            # 공성전차를 위주로 잡게 한다.
+            # 기본적으로 공성전차를 찾아다니되 들키면 튄다 ㅎㅎ
+            if unit.type_id is UnitTypeId.BANSHEE:
+
+                print("cloak state : ", unit.cloak)
+
+                # 공격 모드 전환
+                if (unit.cloak == CloakState.NotCloaked.value and unit.energy_percentage >= 0.3):
+                    enemy_tanks = self.cached_known_enemy_units.filter(
+                        lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
+                    if enemy_tanks.amount > 0:
+                        target = enemy_tanks.closest_to(unit.position)
+                        actions.append(unit.attack(target))
+                    # 만약 탱크가 없다면 HP가 가장 적은 아무 지상 유닛이나, 그것도 없다면 커맨드 직행
+                    else:
+                        targets = self.cached_known_enemy_units.not_flying
+                        MinHP = INF
+                        target = None
+                        for eunit in targets:
+                            if eunit.health < MinHP:
+                                MinHP = eunit.health
+                                target = eunit
+                        if target is not None:
+                            actions.append(unit.attack(target))
+                            print("1")
+                        else:
+                            actions.append(unit.attack(self.enemy_cc))
+                            print("2")
+
+
+
+                # 만약 주위에 자신을 공격 가능한 유닛이 있다면 클로킹에 들어간다.
+                # 마나가 없거나 들키면 도망간다
+                threats = self.cached_known_enemy_units.filter(
+                    lambda u: u.can_attack_air and u.air_range + 1 >= unit.distance_to(u))
+
+                if not threats.empty:
+                    if unit.cloak == CloakState.NotCloaked.value:
+                        actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
+                    elif unit.cloak == CloakState.CloakedDetected.value or unit.energy_percentage < 0.02:
+                        maxrange = 0
+                        for eunit in threats:
+                            maxrange = max(maxrange, eunit.air_range + 1)
+                        total_move_vector = Point2((0, 0))
+                        # 벡터 노말라이즈 메서드가 없나?
+                        for eunit in threats:
+                            print(eunit.name)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.air_range + 1 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        if not threats.empty:
+                            total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                            total_move_vector *= maxrange
+                            # 이동!
+                            dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                           self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                            actions.append(unit.move(dest))
+
+
+                # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
+                if threats.empty and unit.cloak != CloakState.NotCloaked.value:
+                    actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
+
+            # 화염차
+            # 경장갑 위주로 때린다 / 정찰용
+            # 원래는 일꾼제거용인데 그게 없으니 테테전 가정 하에
+            # 경장갑만 잡는다.
+            # 때리더라도 일직선으로 나가기에, 그 안에 최대한 많이 애들을 집어넣어 때리는게 중요
+            # 근데 그걸 구현을 어떻게 하지 ㅋㅋㅋ
+            # 근처에 없으면 그냥 가까이 있는 지상유닛 아무나 때린다.
+            if unit.type_id is UnitTypeId.HELLION:
+                # 정찰을 가본다. 기본적으로는 상대 cc로
+                # cc를 이미 비추고 있는 유닛이 있다면 랜덤으로 다른 곳으로 가본다.
+                # 가다가 지상유닛 누군가를 만나면 그 중 경장갑 위주로 때리기.
+                # evoke initialize
+                if (unit.tag, "scout") not in self.evoked:
+                    self.evoked[(unit.tag, "scout")] = False
+
+                if self.evoked.get((unit.tag, "scout"), False):
+                    # 아무것도 하지 않을 때
+                    # 목표 지점에 도달한 것도 포함
+                    if unit.is_idle:
+                        self.evoked[(unit.tag, "scout")] = False
+                    # 적을 만났을 때
+                    for eunit in self.cached_known_enemy_units:
+                        if unit.distance_to(eunit) < unit.sight_range:
+                            self.evoked[(unit.tag, "scout")] = False
+                            break
+
+                # 정찰 중이 아닐 때 정찰나감
+                if not self.evoked.get((unit.tag, "scout"), False):
+                    dest = None
+                    if not unit.is_moving and not unit.is_attacking:
+                        if self.is_visible(self.enemy_cc):
+                            dest = Point2((random.randint(0, self.map_width), random.randint(0, self.map_height)))
+                            actions.append(unit.attack(dest))
+                        else:
+                            # 커맨드 invisible이면 우선 보이게 하는 것이 목적
+                            dest = self.enemy_cc
+                            print("dest : ", dest)
+                            actions.append(unit.attack(dest))
+
+                        self.evoked[(unit.tag, "scout")] = True
+                    else:
+                        # 정찰 중이 아닌데, 움직이고 있거나 공격 중일때 발생
+                        # 쿨타임 중에는 빠지기
+                        # 쿨타임이 차면 공격한 다음 빠지기
+                        # 단위가 frame
+                        # print("weapon cooldown : ", unit.weapon_cooldown)
+                        if unit.weapon_cooldown < 15:
+                            target = None
+                            min_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2) + 10
+                            for eunit in self.cached_known_enemy_units:
+                                if eunit.is_visible and not eunit.is_flying and eunit.distance_to(unit) < min_dist:
+                                    # 경장갑 우선 타겟팅
+                                    if target is not None and target.is_light and not eunit.is_light:
+                                        continue
+                                    target = eunit
+                                    min_dist = eunit.distance_to(unit)
+                            if target is not None:
+                                dest = target.position
+                                actions.append(unit.attack(dest))
+                        else:
+                            # 나와있는 ground_range에 0.7쯤 더해야 실제 사정거리가 된다..
+                            # 넉넉잡아 1로..
+                            threats = self.cached_known_enemy_units.filter(
+                                lambda u: u.can_attack_ground and u.ground_range + 1 >= unit.distance_to(u))
+                            maxrange = 0
+                            for eunit in self.cached_known_enemy_units:
+                                if eunit.can_attack_ground and eunit.ground_range + 1 >= unit.distance_to(eunit):
+                                    maxrange = max(maxrange, eunit.ground_range + 1)
+                            total_move_vector = Point2((0, 0))
+                            # 벡터 노말라이즈 메서드가 없나?
+                            for eunit in threats:
+                                move_vector = unit.position - eunit.position
+                                move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                                move_vector *= (eunit.ground_range + 1 - unit.distance_to(eunit)) * 1.5
+                                total_move_vector += move_vector
+                            if not threats.empty:
+                                total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                                total_move_vector *= maxrange
+                                # 이동!
+                                dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                               self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                                actions.append(unit.move(dest))
+
+
+            # 불곰
+            # 지상 공격만 가능
+            # 해병과 기동력은 비슷하나 중장갑에 쎄다.
+            # 중장갑 위주로 짤라먹는 플레이를 하려면.. 본진 업그레이드로 스팀팩을 업그레이드 해 주어야 한다. 되어 있는 건가?
+            # 위 코드를 보면 되어 있는 것 같기두.. 스팀팩 쓰고 안쓰고의 여부는 위에 이미 구현되어 있음
+            # 우선순위 1. 공성전차를 의료선에 실어서 잡는 방식으로 운용 - 최소 5명 이상(아니면 학습에 맡길까?)
+            # 2. 토르 잡는 데 사용(기동성으로 치고 빠지기).
+            # 3. 의료선으로 실어서 가거나 무리지어서 몰려가서 커맨드 부시기
+            # 근데 의료선에 타 있다가 내리는 걸 어떻게 detect하지..
+            if unit.type_id is UnitTypeId.MARAUDER:
+
+                check = False
+
+                # 무언가 목표물이 있어서 이동하거나 공격 중이거나 유휴 상태
+                # 목표물을 찾아, 치고 빠지기 구현
+                print("weapon cooldown : ", unit.weapon_cooldown)
+                if unit.weapon_cooldown < 3:
+
+                    # 시즈탱크
+                    if not check:
+                        query_units = self.cached_known_enemy_units.filter(lambda
+                                                                        u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED).sorted(
+                            lambda u: u.health + unit.distance_to(u))
+                        if not query_units.empty:
+                            actions.append(unit.attack(query_units.first))
+                            check = True
+                    # 토르
+                    if not check:
+                        query_units = self.cached_known_enemy_units.filter(
+                            lambda u: u.type_id is UnitTypeId.THOR or u.type_id is UnitTypeId.THORAP).sorted(
+                            lambda u: u.health + unit.distance_to(u))
+                        if not query_units.empty:
+                            actions.append(unit.attack(query_units.first))
+                            check = True
+
+                    # 커맨드
+                    if not check:
+                        actions.append(unit.attack(self.enemy_cc))
+
+                else:
+                    # 무기 쿨타임이 있으므로 약간 후퇴
+                    threats = self.cached_known_enemy_units.filter(
+                        lambda u: u.can_attack_ground and u.ground_range + 1 >= unit.distance_to(u))
+                    maxrange = 0
+                    for eunit in self.cached_known_enemy_units:
+                        if eunit.can_attack_ground and eunit.ground_range + 1 >= unit.distance_to(eunit):
+                            maxrange = max(maxrange, eunit.ground_range + 1)
+                    total_move_vector = Point2((0, 0))
+                    # 벡터 노말라이즈 메서드가 없나?
+                    for eunit in threats:
+                        move_vector = unit.position - eunit.position
+                        move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                        move_vector *= (eunit.ground_range + 1 - unit.distance_to(eunit)) * 1.5
+                        total_move_vector += move_vector
+                    if not threats.empty:
+                        total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                        total_move_vector *= maxrange
+                        # 이동!
+                        dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                       self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                        actions.append(unit.move(dest))
+
+        # 이제 남은거..
+        # 부대지정을 어떻게 할까..?
+        # 보니까 Units()로 묶어서 데리고 다니는 것 같던디.
+        return actions
+
