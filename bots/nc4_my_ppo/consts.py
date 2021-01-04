@@ -46,14 +46,7 @@ class ArmyStrategy(Enum):
     READY = 1 
     OFFENSE = 2
 
-
 Sample = namedtuple('Sample', 's, a, r, done, logp, value')
-
-class NuclearStrategy(Enum):
-    REMAIN = 0
-    PRODUCE = 1
-
-
 
 class MessageType(Enum):
     RESULT = 0

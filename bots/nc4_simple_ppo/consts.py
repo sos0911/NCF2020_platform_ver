@@ -52,12 +52,9 @@ class NuclearStrategy(Enum):
     REMAIN = 0
     PRODUCE = 1
 
-
-
 class MessageType(Enum):
     RESULT = 0
     EXCEPTION = 1
-
 
 # wonseok add #
 N_FEATURES = 5 + 13

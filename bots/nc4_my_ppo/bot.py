@@ -42,7 +42,7 @@ from sc2.pixel_map import PixelMap
 import random
 
 # .을 const 앞에 왜 찍는 거지?
-from .consts import ArmyStrategy, CommandType, EconomyStrategy, NuclearStrategy
+from .consts import ArmyStrategy, CommandType, EconomyStrategy
 
 INF = 1e9
 
@@ -61,7 +61,6 @@ class Model(nn.Module):
         self.vf = nn.Linear(64, 1)
         self.economy_head = nn.Linear(64, len(EconomyStrategy))
         self.army_head = nn.Linear(64, len(ArmyStrategy))
-        self.nuclear_head = nn.Linear(64, len(NuclearStrategy))
 
     def forward(self, x):
         x = F.relu(self.norm1(self.fc1(x)))
@@ -69,7 +68,6 @@ class Model(nn.Module):
         value = self.vf(x)
         economy_logp = torch.log_softmax(self.economy_head(x), -1)
         army_logp = torch.log_softmax(self.army_head(x), -1)
-        nuclear_logp = torch.log_softmax(self.nuclear_head(x), -1)
         bz = x.shape[0]
         logp = (economy_logp.view(bz, -1, 1) + army_logp.view(bz, 1, -1)).view(bz, -1)
         return value, logp
@@ -160,27 +158,30 @@ class Bot(sc2.BotAI):
         state[2] = min(1.0, self.vespene / 1000)
         state[3] = min(1.0, self.time / 360)
         state[4] = min(1.0, self.state.score.total_damage_dealt_life / 2500)
+
+        # 아군 유닛을 state에 추가
         for unit in self.units.not_structure:
-            if unit.type_id is UnitTypeId.THORAP :
+            if unit.type_id is UnitTypeId.THORAP:
                 state[5 + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
-            elif unit.type_id is UnitTypeId.VIKINGASSAULT :
+            elif unit.type_id is UnitTypeId.VIKINGASSAULT:
                 state[5 + EconomyStrategy.to_index[EconomyStrategy.VIKINGFIGHTER.value]] += 1
-            elif unit.type_id is UnitTypeId.SIEGETANKSIEGED :
+            elif unit.type_id is UnitTypeId.SIEGETANKSIEGED:
                 state[5 + EconomyStrategy.to_index[EconomyStrategy.SIEGETANK.value]] += 1
-            else :
+            else:
                 state[5 + EconomyStrategy.to_index[unit.type_id]] += 1
 
         state[5 + len(EconomyStrategy) - 1] = self.has_nuke
 
         # wonseok add #
-        for unit in self.known_enemy_units.not_structure :
-            if unit.type_id is UnitTypeId.THORAP :
+        # 적 유닛을 state에 추가
+        for unit in self.known_enemy_units.not_structure:
+            if unit.type_id is UnitTypeId.THORAP:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
-            elif unit.type_id is UnitTypeId.VIKINGASSAULT :
+            elif unit.type_id is UnitTypeId.VIKINGASSAULT:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.VIKINGFIGHTER.value]] += 1
-            elif unit.type_id is UnitTypeId.SIEGETANKSIEGED :
+            elif unit.type_id is UnitTypeId.SIEGETANKSIEGED:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.SIEGETANK.value]] += 1
-            else :
+            else:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[unit.type_id]] += 1
 
         state[5 + len(EconomyStrategy)*2 - 1] = False
@@ -383,10 +384,10 @@ class Bot(sc2.BotAI):
 
             # 이동 준비 전 시즈탱크 풀기
             if not (self.army_strategy == self.next_army_strategy) and UnitTypeId.SIEGETANKSIEGED in self.units and not self.evoked.get((unit.tag, "offense_mode"), False):
-                if unit.type_id is UnitTypeId.SIEGETANKSIEGED :
+                if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
                     actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
             
-            else :
+            else:
                 self.army_strategy = self.next_army_strategy
 
             if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK) :
