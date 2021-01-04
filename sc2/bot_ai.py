@@ -502,6 +502,7 @@ class BotAI:
     async def can_place(self, building: Union[AbilityData, AbilityId, UnitTypeId], position: Point2) -> bool:
         """Tests if a building can be placed in the given location."""
         building_type = type(building)
+        print("type : ", building_type)
         assert building_type in {AbilityData, AbilityId, UnitTypeId}
         if building_type == UnitTypeId:
             building = self._game_data.units[building.value].creation_ability

@@ -31,6 +31,7 @@ class EconomyStrategy(Enum):
     RAVEN = UnitTypeId.RAVEN
     BATTLECRUISER = UnitTypeId.BATTLECRUISER
     #MULE = UnitTypeId.MULE # 나중에 추가
+    NUKE = UnitTypeId.NUKE # 무적권 마지막에
 
 EconomyStrategy.to_index = dict()
 EconomyStrategy.to_type_id = dict()
@@ -42,7 +43,7 @@ for idx, strategy in enumerate(EconomyStrategy):
 
 class ArmyStrategy(Enum):
     DEFENSE = 0
-    READY = 1
+    READY = 1 
     OFFENSE = 2
 
 

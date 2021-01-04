@@ -52,7 +52,7 @@ class Bot(sc2.BotAI):
 
     def on_start(self):
         self.evoked = dict()
-        self.army_strategy = ArmyStrategy.DEFENSE
+        self.army_strategy = ArmyStrategy.OFFENSE
         self.map_height = 63
         self.map_width = 128
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 전체 유닛에서 사령부 검색
@@ -297,36 +297,36 @@ class Bot(sc2.BotAI):
 
                         def yamato_target_func(unit):
                             # 야마토 포 상대 지정
-                            yamato_targets = self.known_enemy_units(
-                                {UnitTypeId.THOR, UnitTypeId.THORAP, UnitTypeId.RAVEN, UnitTypeId.BATTLECRUISER})
+                            # 일정 범위 내 적들에 한해 적용
+                            yamato_enemy_range = 15
+                            yamato_candidate_id = [UnitTypeId.THORAP, UnitTypeId.THOR, UnitTypeId.BATTLECRUISER, UnitTypeId.SIEGETANKSIEGED,
+                                                   UnitTypeId.SIEGETANK, UnitTypeId.RAVEN]
 
-                            yamato_target = None
-                            enemy_thors = yamato_targets({UnitTypeId.THOR, UnitTypeId.THORAP})
-                            if enemy_thors.empty:  # 토르가 없으면
-                                enemy_ravens = yamato_targets(UnitTypeId.RAVEN)
-                                if enemy_ravens.empty:  # 밤까마귀 없으면
-                                    enemy_cruisers = yamato_targets(UnitTypeId.BATTLECRUISER)
-                                    if enemy_cruisers.empty:  # 배틀 없으면 커맨드에 쏘러 간다.
-                                        yamato_target = self.enemy_cc
-                                    else:
-                                        yamato_target = enemy_cruisers.sorted(lambda u: u.health, reverse=True)[0]
-                                else:  # 밤까마귀 있으면
-                                    yamato_target = enemy_ravens.sorted(lambda u: u.energy, reverse=True)[0]
-                            else:  # 토르 있으면
-                                yamato_target = enemy_thors.sorted(lambda u: u.health, reverse=True)[0]
+                            for eunit_id in yamato_candidate_id:
+                                target_candidate = self.known_enemy_units.filter(lambda u: u.type_id is eunit_id and unit.distance_to(u) <= yamato_enemy_range)
+                                target_candidate.sorted(lambda u: u.health, reverse=True)
+                                if not target_candidate.empty:
+                                    return target_candidate.first
 
-                            return yamato_target
+                            # 위 리스트 안 개체들이 없다면 나머지 중 타겟팅
+                            # 나머지 유닛도 없다면 적 커맨드로 ㄱㄱ
+                            enemy_left = self.known_enemy_units.filter(lambda u: unit.distance_to(u) <= yamato_enemy_range)
+                            enemy_left.sorted(lambda u: u.health, reverse=True)
+                            if not enemy_left.empty:
+                                return enemy_left.first
+                            else:
+                                return self.enemy_cc
 
 
                         # 토르, 밤까마귀, 배틀 같은 성가시거나 피통 많은 애들을 조지는 데 야마토 포 사용
                         # 얘네가 없으면 아껴 놓다가 커맨드에 사용.
-                        yamato_targets = self.known_enemy_units({UnitTypeId.THOR, UnitTypeId.THORAP, UnitTypeId.RAVEN, UnitTypeId.BATTLECRUISER, UnitTypeId.COMMANDCENTER})
                         cruiser_abilities = await self.get_available_abilities(unit)
-                        if not yamato_targets.empty and AbilityId.YAMATO_YAMATOGUN in cruiser_abilities:
+                        if AbilityId.YAMATO_YAMATOGUN in cruiser_abilities:
                             yamato_target = yamato_target_func(unit)
                             if type(yamato_target) is not Unit:
                                 # 커맨드 unit을 가리키게 변경
-                                yamato_target = self.known_enemy_units(UnitTypeId.COMMANDCENTER).first
+                                if not self.known_enemy_units(UnitTypeId.COMMANDCENTER).empty:
+                                    yamato_target = self.known_enemy_units(UnitTypeId.COMMANDCENTER).first
                             if unit.distance_to(yamato_target) >= 12:
                                 actions = self.moving_shot(actions, unit, 1, yamato_target_func, 0.3)
                             else:
@@ -972,9 +972,9 @@ class Bot(sc2.BotAI):
                     # 은신 상태이면서 밤까마귀가 감지하고 있지 않으면 그냥 공격
                     # 그 상태가 아니라면 무빙샷.
                     # TODO : 은신이 감지되고 있는지 확인이 불가함. CloakState 작동 불가
-                    # 불가피하게 밤까마귀의 시야 범위 안에 있는지 확인하는 것으로 대체
+                    # 불가피하게 밤까마귀의 탐지 범위 안에 있는지 확인하는 것으로 대체
                     clock_threats = self.cached_known_enemy_units.filter(
-                        lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
+                        lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.detect_range)
 
                     # 공격 모드 전환
                     if unit.is_idle and unit.energy_percentage >= 0.3:

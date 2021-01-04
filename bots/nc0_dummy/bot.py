@@ -30,6 +30,8 @@ class Bot(sc2.BotAI):
         self.evoked = dict()
         self.evoked["train"] = 0
 
+        self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 전체 유닛에서 사령부 검색
+
         # # 디버깅
         # self.minerals = 3000
         # self.vespene = 3000
@@ -40,8 +42,13 @@ class Bot(sc2.BotAI):
         # 빌드 오더 생성
         #
         if len(self.build_order) == 0:
-            for _ in range(4):
-                self.build_order.append(UnitTypeId.MARAUDER)
+            for _ in range(1):
+                self.build_order.append(UnitTypeId.RAVEN)
+            for _ in range(1):
+                self.build_order.append(UnitTypeId.SIEGETANK)
+            for _ in range(1):
+                self.build_order.append(UnitTypeId.THOR)
+
 
 
         #
@@ -51,7 +58,7 @@ class Bot(sc2.BotAI):
         ccs = ccs.idle  # 실행중인 명령이 없는 사령부 검색
         if ccs.exists:  # 사령부가 하나이상 존재할 경우
             cc = ccs.first  # 첫번째 사령부 선택
-            if self.can_afford(self.build_order[0]) and self.time - self.evoked.get((cc.tag, 'train'), 0) > 1.0 and self.evoked.get("train", 0) < 4:
+            if self.can_afford(self.build_order[0]) and self.time - self.evoked.get((cc.tag, 'train'), 0) > 1.0 and self.evoked.get("train", 0) < 3:
                 # 해당 유닛 생산 가능하고, 마지막 명령을 발행한지 1초 이상 지났음
                 actions.append(cc.train(self.build_order[0]))  # 첫 번째 유닛 생산 명령
                 del self.build_order[0]  # 빌드오더에서 첫 번째 유닛 제거
