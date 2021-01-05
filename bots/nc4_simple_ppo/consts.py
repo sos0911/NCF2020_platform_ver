@@ -20,7 +20,7 @@ class CommandType(bytes, Enum):
 class EconomyStrategy(Enum):
     MARINE = UnitTypeId.MARINE
     MARAUDER = UnitTypeId.MARAUDER
-    #REAPER = UnitTypeId.REAPER
+    REAPER = UnitTypeId.REAPER
     GHOST = UnitTypeId.GHOST
     HELLION = UnitTypeId.HELLION
     SIEGETANK = UnitTypeId.SIEGETANK
@@ -30,7 +30,7 @@ class EconomyStrategy(Enum):
     BANSHEE = UnitTypeId.BANSHEE
     RAVEN = UnitTypeId.RAVEN
     BATTLECRUISER = UnitTypeId.BATTLECRUISER
-    #MULE = UnitTypeId.MULE # 나중에 추가
+
 
 EconomyStrategy.to_index = dict()
 EconomyStrategy.to_type_id = dict()
@@ -42,21 +42,16 @@ for idx, strategy in enumerate(EconomyStrategy):
 
 class ArmyStrategy(Enum):
     DEFENSE = 0
-    READY = 1
-    OFFENSE = 2
+    OFFENSE = 1
 
 
 Sample = namedtuple('Sample', 's, a, r, done, logp, value')
 
-class NuclearStrategy(Enum):
-    REMAIN = 0
-    PRODUCE = 1
 
 class MessageType(Enum):
     RESULT = 0
     EXCEPTION = 1
 
-# wonseok add #
-N_FEATURES = 5 + 13
-# wonseok end #
+
+N_FEATURES = 5 + 12
 N_ACTIONS = len(EconomyStrategy) * len(ArmyStrategy)

@@ -73,12 +73,12 @@ class Environment:
             # thread 기반 queue device를 실행
             import threading
             _device = threading.Thread(
-                target=device_func, 
+                target=device_func,
                 args=(
                     self.context,
                     f"tcp://*:{args.frontend_port}",
                     f"inproc://backend"
-                ), 
+                ),
             )
             _device.start()
             self.sock.connect(f"inproc://backend")
@@ -103,7 +103,7 @@ class Environment:
         elif cmd == CommandType.REQ_TASK:  # actor에서 게임 세팅 요청 --> set_task
             return cmd, None, None, None, None, dict()
 
-        elif cmd == CommandType.ERROR:   # actor에서 에러 메시지 전달 --> finish
+        elif cmd == CommandType.ERROR:  # actor에서 에러 메시지 전달 --> finish
             error_msg = pickle.loads(msg[0])
             return cmd, None, None, None, None, dict(error=error_msg)
 
@@ -117,11 +117,12 @@ class Environment:
     def set_task(self, task_dict):
         self.sock.send_multipart([pickle.dumps(task_dict)])
 
+
 class Actor:
     def __init__(self, args):
         self.args = args
 
-    def run(self, _id: int, verbose: bool=False, timeout: int=60000, n_games: int=100):
+    def run(self, _id: int, verbose: bool = False, timeout: int = 60000, n_games: int = 100):
         # hostname = f"{socket.gethostname()}_{time.ctime().replace(' ', '-')}"
         hostname = f"{socket.gethostname()}_{_id}_{time.time()}"
         address = f"tcp://{self.args.attach}:{self.args.frontend_port}"
@@ -130,7 +131,7 @@ class Actor:
         error_sock.connect(address)
 
         while True:
-            try: 
+            try:
                 # alive_event:
                 # 게임이 인스턴스 재시작 없이 재시작 할 때마다 set
                 # 게임이 정상적으로 재시작하고 있다는 의미
@@ -178,7 +179,7 @@ class Actor:
                             req_kill_event,
                             exc_queue,
                             n_games=n_games,
-                            realtime=False, 
+                            realtime=False,
                             portconfig=portconfig
                         ),
                         Actor._join_game(
@@ -189,7 +190,7 @@ class Actor:
                             req_kill_event,
                             exc_queue,
                             n_games=n_games,
-                            realtime=False, 
+                            realtime=False,
                             portconfig=portconfig
                         )
                     ))
@@ -206,12 +207,12 @@ class Actor:
                     # 현재 프로세스에서 제한시간마다 게임이 새로 시작하는지 검사해서,
                     # 게임이 새로 시작하지 않으면(alive_event), 자식프로세스 재시작
                     game_play_proc = mp.Process(
-                        target=play_game, 
+                        target=play_game,
                         args=(hostname, address, n_games, alive_event, req_kill_event, exc_queue),
                         daemon=False,
                     )
                     game_play_proc.start()
-                    
+
                     running = True
                     checkpoint = time.monotonic()
                     while running:
@@ -234,22 +235,22 @@ class Actor:
 
                         time.sleep(1)
 
-                    # 게임 프로세스 종료 시도 - sig.TERM                    
+                    # 게임 프로세스 종료 시도 - sig.TERM
                     if game_play_proc.is_alive():
                         for _ in range(3):
                             game_play_proc.terminate()
                             time.sleep(0.5)
                             if not game_play_proc.is_alive():
                                 break
-                    
+
                     # 게임 프로세스 종료 시도 - sig.KILL
                     if game_play_proc.is_alive():
                         game_play_proc.kill()
-                        game_play_proc.close()    
+                        game_play_proc.close()
 
-                    # 게임 프로세스 종료 시도 - psutil
-                    if game_play_proc.is_alive():  
-                        kill_children_processes(game_play_proc.pid, including_parent=True)                
+                        # 게임 프로세스 종료 시도 - psutil
+                    if game_play_proc.is_alive():
+                        kill_children_processes(game_play_proc.pid, including_parent=True)
 
             except Exception as exc:
                 import traceback
@@ -269,14 +270,14 @@ class Actor:
                     pass
 
     def log_exception(self, hostname, error_sock, error_msg):
-        # 예외를 learner 프로세스로 전달, 
+        # 예외를 learner 프로세스로 전달,
         # learnr 프로세스에서 log 파일에 저장
         header = f"@{hostname}-{time.ctime().replace(' ', '-')}"
         error_msg = f"{header}\n{error_msg}"
         cprint(f"{error_msg}", 'red')
         error_sock.send_multipart([CommandType.ERROR, pickle.dumps(error_msg)])
         error_sock.recv_multipart()
-                
+
     @staticmethod
     async def _host_game(
             hostname,
@@ -288,14 +289,14 @@ class Actor:
             req_kill_event,
             exc_queue,
             n_games,
-            realtime=False, 
-            portconfig=None, 
-            save_replay_as=None, 
+            realtime=False,
+            portconfig=None,
+            save_replay_as=None,
             step_time_limit=None,
-            game_time_limit=None, 
-            rgb_render_config=None, 
+            game_time_limit=None,
+            rgb_render_config=None,
             random_seed=None,
-        ):
+    ):
 
         async with SC2Process(render=rgb_render_config is not None) as server:
             try:
@@ -305,7 +306,7 @@ class Actor:
                     task_dict.update(pickle.loads(sock.recv_multipart()[0]))
                     # 게임 세팅 설정
                     # !주의!: join쪽 task_dict, players와 동일한 인스턴스를 유지해야 하기 때문에,
-                    # 절대 여기서 새로 생성하지 말고 업데이트만 해야함, 
+                    # 절대 여기서 새로 생성하지 말고 업데이트만 해야함,
                     # 불가: players = [_Bot(), _Bot()], 가능 players[0] = _Bot(); players[1] = _Bot()
                     step_interval = task_dict['step_interval']
                     players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock))
@@ -320,14 +321,14 @@ class Actor:
                     map_settings = sc2.maps.get(task_dict['game_map'])
                     await server.ping()
                     client = await _setup_host_game(server, map_settings, players, realtime, random_seed)
-                    
+
                     result = await _play_game(
-                        players[0], client, realtime, portconfig, 
+                        players[0], client, realtime, portconfig,
                         step_time_limit, game_time_limit, rgb_render_config
                     )
                     if save_replay_as is not None:
                         await client.save_replay(save_replay_as)
-                    await client.leave()  
+                    await client.leave()
                     # await client.quit()  # 게임 인스턴스 재시작을 위해 프로세스 종료하지 않음
             except:
                 # 예외가 발생하면 부모 프로세스에 전달
@@ -336,7 +337,7 @@ class Actor:
 
             # n_games 만큼 게임을 반복했음을 부모 프로세스에 알림
             # join에서 host를 죽이거나, host에서 join을 죽일 경우를 대비해서,
-            # host와 join 양쪽에 req_kill_evnet를 set 해야함 
+            # host와 join 양쪽에 req_kill_evnet를 set 해야함
             # -> 어떤 경우에도 부모는 이 프로세스를 종료해야함을 알 수 있음
             req_kill_event.set()
 
@@ -349,12 +350,12 @@ class Actor:
             req_kill_event,
             exc_queue,
             n_games,
-            realtime=False, 
+            realtime=False,
             portconfig=None,
-            save_replay_as=None, 
-            step_time_limit=None, 
+            save_replay_as=None,
+            step_time_limit=None,
             game_time_limit=None,
-        ):
+    ):
 
         async with SC2Process() as server:
             try:
@@ -370,7 +371,7 @@ class Actor:
                     client = Client(server._ws)
 
                     result = await _play_game(
-                        players[1], client, realtime, portconfig, 
+                        players[1], client, realtime, portconfig,
                         step_time_limit, game_time_limit
                     )
                     if save_replay_as is not None:
@@ -380,10 +381,10 @@ class Actor:
             except:
                 # 예외가 발생하면 부모 프로세스에 전달
                 import traceback
-                exc_queue.put(traceback.format_exc())             
+                exc_queue.put(traceback.format_exc())
 
-            # n_games 만큼 게임을 반복했음을 부모 프로세스에 알림
+                # n_games 만큼 게임을 반복했음을 부모 프로세스에 알림
             # join에서 host를 죽이거나, host에서 join을 죽일 경우를 대비해서,
-            # host와 join 양쪽에 req_kill_evnet를 set 해야함 
+            # host와 join 양쪽에 req_kill_evnet를 set 해야함
             # -> 어떤 경우에도 부모는 이 프로세스를 종료해야함을 알 수 있음
             req_kill_event.set()

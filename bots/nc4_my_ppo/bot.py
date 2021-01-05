@@ -1,6 +1,4 @@
-
 __author__ = '박현수 (hspark8312@ncsoft.com), NCSOFT Game AI Lab'
-
 
 # python -m bots.nc_example_v5.bot --server=172.20.41.105
 # kill -9 $(ps ax | grep SC2_x64 | fgrep -v grep | awk '{ print $1 }')
@@ -53,7 +51,7 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         # wonseok add #
-        self.fc1 = nn.Linear(5 + len(EconomyStrategy)*2, 64)
+        self.fc1 = nn.Linear(5 + len(EconomyStrategy) * 2 + 1, 64)
         # wonseok end #
         self.norm1 = nn.LayerNorm(64)
         self.fc2 = nn.Linear(64, 64)
@@ -77,6 +75,7 @@ class Bot(sc2.BotAI):
     """
     example v1과 유사하지만, 빌드 오더 대신, 유닛 비율을 맞추도록 유닛을 생산함
     """
+
     def __init__(self, step_interval=5.0, host_name='', sock=None):
         super().__init__()
         self.step_interval = step_interval
@@ -90,7 +89,8 @@ class Bot(sc2.BotAI):
                     torch.load(model_path, map_location='cpu')
                 )
             except Exception as exc:
-                import traceback; traceback.print_exc()
+                import traceback;
+                traceback.print_exc()
 
     def on_start(self):
         """
@@ -125,9 +125,9 @@ class Bot(sc2.BotAI):
 
     async def on_step(self, iteration: int):
         """
-
+        매 frame마다 실행되는 함수
         """
-        actions = list() # 이번 step에 실행할 액션 목록
+        actions = list()  # 이번 step에 실행할 액션 목록
 
         if self.time - self.last_step_time >= self.step_interval:
             self.economy_strategy, self.next_army_strategy = self.set_strategy()
@@ -146,20 +146,31 @@ class Bot(sc2.BotAI):
 
         actions += self.train_action()
         actions += await self.unit_actions()
+
+        # 공격 모드가 아닌 기타 모드일때
+        # offense_mode가 될지 말지 정함
+        # 하나라도 트리거가 된다면 모두 트리거가 된다.
+        for unit in self.units.not_structure:
+            if self.select_mode(unit):
+                # 모든 유닛이 트리거 작동
+                for unit in self.units.not_structure:
+                    self.evoked[(unit.tag, "offense_mode")] = True
+                break
+
         await self.do_actions(actions)
 
     def set_strategy(self):
         #
         # 특징 추출
         #
-        state = np.zeros(5 + len(EconomyStrategy)*2, dtype=np.float32)
+
+        # 적 reaper state를 기록하기 위한 +1
+        state = np.zeros(5 + len(EconomyStrategy) * 2 + 1, dtype=np.float32)
         state[0] = self.cc.health_percentage
         state[1] = min(1.0, self.minerals / 1000)
         state[2] = min(1.0, self.vespene / 1000)
         state[3] = min(1.0, self.time / 360)
         state[4] = min(1.0, self.state.score.total_damage_dealt_life / 2500)
-
-        # 아군 유닛을 state에 추가
         for unit in self.units.not_structure:
             if unit.type_id is UnitTypeId.THORAP:
                 state[5 + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
@@ -173,7 +184,6 @@ class Bot(sc2.BotAI):
         state[5 + len(EconomyStrategy) - 1] = self.has_nuke
 
         # wonseok add #
-        # 적 유닛을 state에 추가
         for unit in self.known_enemy_units.not_structure:
             if unit.type_id is UnitTypeId.THORAP:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
@@ -181,10 +191,14 @@ class Bot(sc2.BotAI):
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.VIKINGFIGHTER.value]] += 1
             elif unit.type_id is UnitTypeId.SIEGETANKSIEGED:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.SIEGETANK.value]] += 1
+            elif unit.type_id is UnitTypeId.REAPER:
+                # 리퍼 예외처리
+                # 에러 방지 : economystate에 reaper가 없음
+                state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[UnitTypeId.NUKE.value] + 1] += 1
             else:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[unit.type_id]] += 1
 
-        state[5 + len(EconomyStrategy)*2 - 1] = False
+        # state[5 + len(EconomyStrategy) * 2 - 1] = False
         state = state.reshape(1, -1)
         # wonseok end #
 
@@ -216,8 +230,9 @@ class Bot(sc2.BotAI):
         #
         actions = list()
         next_unit = self.economy_strategy
-        if next_unit == EconomyStrategy.NUKE.value :
-            if self.can_afford(AbilityId.BUILD_NUKE) and not self.has_nuke and self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0 :
+        if next_unit == EconomyStrategy.NUKE.value:
+            if self.can_afford(AbilityId.BUILD_NUKE) and not self.has_nuke and self.time - self.evoked.get(
+                    (self.cc.tag, 'train'), 0) > 1.0:
                 actions.append(self.cc(AbilityId.BUILD_NUKE))
                 self.has_nuke = True
                 self.evoked[(self.cc.tag, 'train')] = self.time
@@ -226,13 +241,13 @@ class Bot(sc2.BotAI):
                 # 해당 유닛 생산 가능하고, 마지막 명령을 발행한지 1초 이상 지났음
                 actions.append(self.cc.train(next_unit))
                 self.evoked[(self.cc.tag, 'train')] = self.time
-            
+
         return actions
 
     def clamp(self, num, min_value, max_value):
         return max(min(num, max_value), min_value)
 
-    def select_threat(self, unit:Unit):
+    def select_threat(self, unit: Unit):
         # 자신에게 위협이 될 만한 상대 유닛들을 리턴
         threats = None
         if unit.is_flying:
@@ -250,17 +265,20 @@ class Bot(sc2.BotAI):
 
         return threats
 
-    def select_mode(self, unit:Unit):
+    def select_mode(self, unit: Unit):
         # 방어모드일때 공격모드로 전환될지 트리거 세팅
+        # 방어모드라면 False, 공격모드로 바뀐다면 True return
         nearby_enemies = self.known_enemy_units.filter(
             lambda u: unit.distance_to(u) <= max(unit.sight_range, unit.ground_range, unit.air_range))
         if nearby_enemies.empty:
             self.evoked[(unit.tag, "offense_mode")] = False
+            return False
         else:
             self.evoked[(unit.tag, "offense_mode")] = True
+            return True
 
     # 무빙샷
-    def moving_shot(self, actions, unit, cooldown, target_func, margin_health:float=0, minimum:float=0):
+    def moving_shot(self, actions, unit, cooldown, target_func, margin_health: float = 0, minimum: float = 0):
         # print("WEAPON COOLDOWN : ", unit.weapon_cooldown)
         if unit.weapon_cooldown < cooldown:
             target = target_func(unit)
@@ -279,7 +297,7 @@ class Bot(sc2.BotAI):
                 # 배틀크루저 예외처리.
                 threats = showing_only_enemy_units.filter(
                     lambda u: (u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
-                                u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u)))
+                            u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u)))
                 for eunit in threats:
                     if eunit.type_id is UnitTypeId.BATTLECRUISER:
                         maxrange = max(maxrange, 6)
@@ -326,7 +344,8 @@ class Bot(sc2.BotAI):
     # 그룹당 중복 가능..
     def unit_groups(self):
         groups = []
-        center_candidates = self.units.not_structure.filter(lambda u:u.type_id is not UnitTypeId.SIEGETANKSIEGED and u.type_id is not UnitTypeId.SIEGETANK)
+        center_candidates = self.units.not_structure.filter(
+            lambda u: u.type_id is not UnitTypeId.SIEGETANKSIEGED and u.type_id is not UnitTypeId.SIEGETANK)
         for unit in center_candidates:
             group = center_candidates.closer_than(5, unit)
             groups.append(group)
@@ -359,9 +378,9 @@ class Bot(sc2.BotAI):
         #
         actions = list()
 
-        #loc = await self.find_placement(building=(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE)), near=self.cc.position)
-        #print(loc)
-        #actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, loc))
+        # loc = await self.find_placement(building=(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE)), near=self.cc.position)
+        # print(loc)
+        # actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, loc))
 
         if not self.units.not_structure.empty:
             my_groups = self.unit_groups()
@@ -378,41 +397,43 @@ class Bot(sc2.BotAI):
             else:
                 target = enemy_unit
 
-            # 모든 유닛에 대해 방어중일 때 공격형 모드로 전환될지 말지 설정
-            # 설정은 하나 화염차는 예외로 사용은 하지 않는다.
-            self.select_mode(unit)
-
             # 이동 준비 전 시즈탱크 풀기
-            if not (self.army_strategy == self.next_army_strategy) and UnitTypeId.SIEGETANKSIEGED in self.units and not self.evoked.get((unit.tag, "offense_mode"), False):
+            if not (
+                    self.army_strategy == self.next_army_strategy) and UnitTypeId.SIEGETANKSIEGED in self.units and not self.evoked.get(
+                    (unit.tag, "offense_mode"), False):
                 if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
                     actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
-            
+
             else:
                 self.army_strategy = self.next_army_strategy
 
-            if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK) :
-                if self.army_strategy is ArmyStrategy.DEFENSE and self.evoked.get((unit.tag, "offense_mode"), False):
-                    move_position = (self.cc.position)
-                    actions.append(unit.move(move_position))
-                elif self.army_strategy is ArmyStrategy.READY and self.evoked.get((unit.tag, "offense_mode"), False):
+            if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK):
+                if self.army_strategy is ArmyStrategy.DEFENSE and not self.evoked.get((unit.tag, "offense_mode"),
+                                                                                      False):
+                    move_position = self.cc.position
+                    # move와 attack 둘 중 뭐가 나을까..?
+                    actions.append(unit.attack(move_position))
+                elif self.army_strategy is ArmyStrategy.READY and not self.evoked.get((unit.tag, "offense_mode"),
+                                                                                      False):
                     move_position = (self.cc.position + self.enemy_cc) / 2
                     actions.append(unit.move(move_position))
-                
 
             self.prev_armystrategy = self.army_strategy
 
             ## 의료선과 밤까마귀 아니면 ...
             if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN):
-                
-                    # 전투가능한 유닛 수가 15를 넘으면 적 본진으로 공격
-                    # actions.append(unit.attack(target))
+
+                # 전투가능한 유닛 수가 15를 넘으면 적 본진으로 공격
+                # actions.append(unit.attack(target))
                 # else:  # ArmyStrategy.DEFENSE
                 # 적 사령부 방향에 유닛 집결
                 # target = self.start_location + 0.25 * (self.enemy_cc.position - self.start_location)
                 # actions.append(unit.attack(target))
 
                 if unit.type_id in (UnitTypeId.MARINE, UnitTypeId.MARAUDER):
-                    if (self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False)) and unit.distance_to(target) < 8:
+                    if (self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"),
+                                                                                      False)) and unit.distance_to(
+                            target) < 8:
                         # 유닛과 목표의 거리가 8이하일 경우 스팀팩 사용
                         if not unit.has_buff(BuffId.STIMPACK) and unit.health_percentage > 0.5:
                             # 현재 스팀팩 사용중이 아니며, 체력이 50% 이상
@@ -430,14 +451,14 @@ class Bot(sc2.BotAI):
                             enemies = self.known_enemy_units.filter(lambda e: e.is_visible)
                             if not enemies.empty:
                                 # 보이는 적이 하나라도 있다면, 그 중에 HP가 가장 적은 애 집중타격
-                                return enemies.sorted(lambda u:u.health)[0]
-                                #return enemies.closest_to(unit)
+                                return enemies.sorted(lambda u: u.health)[0]
+                                # return enemies.closest_to(unit)
 
                             return self.enemy_cc
 
                         actions = self.moving_shot(actions, unit, 3, target_func, 0.5)
 
-## BATTLECRUISER ##
+                ## BATTLECRUISER ##
                 if unit.type_id is UnitTypeId.BATTLECRUISER:
                     # 왜인지 모르지만 이놈은 관련 정보가 빠져 있다. 특히 attack range.
                     # 일단 공중, 지상 모두 range는 6.0
@@ -448,7 +469,8 @@ class Bot(sc2.BotAI):
                             # 커맨드 스냅샷 포함
                             # 만약 위협이 근처에 존재한다면 위협 제거
                             # 위협이 없다면 가까운애 때리러 가거나 야마토 포 쏘러 감
-                            threats = self.known_enemy_units.filter(lambda u: u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))
+                            threats = self.known_enemy_units.filter(
+                                lambda u: u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))
                             for eunit in self.known_enemy_units:
                                 if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(eunit):
                                     threats.append(eunit)
@@ -459,30 +481,32 @@ class Bot(sc2.BotAI):
                                 else:
                                     return self.known_enemy_units.closest_to(unit)  # 가까운애 때리기
                             else:
-                                return threats.sorted(lambda u:u.health)[0]
+                                return threats.sorted(lambda u: u.health)[0]
 
                         def yamato_target_func(unit):
                             # 야마토 포 상대 지정
                             # 일정 범위 내 적들에 한해 적용
                             yamato_enemy_range = 15
-                            yamato_candidate_id = [UnitTypeId.THORAP, UnitTypeId.THOR, UnitTypeId.BATTLECRUISER, UnitTypeId.SIEGETANKSIEGED,
+                            yamato_candidate_id = [UnitTypeId.THORAP, UnitTypeId.THOR, UnitTypeId.BATTLECRUISER,
+                                                   UnitTypeId.SIEGETANKSIEGED,
                                                    UnitTypeId.SIEGETANK, UnitTypeId.RAVEN]
 
                             for eunit_id in yamato_candidate_id:
-                                target_candidate = self.known_enemy_units.filter(lambda u: u.type_id is eunit_id and unit.distance_to(u) <= yamato_enemy_range)
+                                target_candidate = self.known_enemy_units.filter(
+                                    lambda u: u.type_id is eunit_id and unit.distance_to(u) <= yamato_enemy_range)
                                 target_candidate.sorted(lambda u: u.health, reverse=True)
                                 if not target_candidate.empty:
                                     return target_candidate.first
 
                             # 위 리스트 안 개체들이 없다면 나머지 중 타겟팅
                             # 나머지 유닛도 없다면 적 커맨드로 ㄱㄱ
-                            enemy_left = self.known_enemy_units.filter(lambda u: unit.distance_to(u) <= yamato_enemy_range)
+                            enemy_left = self.known_enemy_units.filter(
+                                lambda u: unit.distance_to(u) <= yamato_enemy_range)
                             enemy_left.sorted(lambda u: u.health, reverse=True)
                             if not enemy_left.empty:
                                 return enemy_left.first
                             else:
                                 return self.enemy_cc
-
 
                         # 토르, 밤까마귀, 배틀 같은 성가시거나 피통 많은 애들을 조지는 데 야마토 포 사용
                         # 얘네가 없으면 아껴 놓다가 커맨드에 사용.
@@ -551,7 +575,8 @@ class Bot(sc2.BotAI):
                             actions.append(unit(AbilityId.MORPH_THORHIGHIMPACTMODE))  # 250mm 천벌포로 교체
                             self.evoked[(unit.tag, "CHANGE_WEAPON")] = self.time
 
-                    if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):  # 재블린 미사일 모드
+                    if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"),
+                                                                                     False):  # 재블린 미사일 모드
                         def target_func(unit):
                             target = None
                             flying_enemies = self.known_enemy_units.filter(lambda unit: unit.is_flying)  # 공중 유닛
@@ -604,7 +629,8 @@ class Bot(sc2.BotAI):
                             actions.append(unit(AbilityId.MORPH_THOREXPLOSIVEMODE))  # 재블린 모드로 교체
                             self.evoked[(unit.tag, "CHANGE_WEAPON")] = self.time
 
-                    if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):  # 250mm 천벌포 모드
+                    if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"),
+                                                                                     False):  # 250mm 천벌포 모드
                         def target_func(unit):
                             enemy_inrange_units = self.cached_known_enemy_units.in_attack_range_of(unit)
                             enemy_flying_heavy = enemy_inrange_units.filter(lambda u: u.is_armored)
@@ -691,24 +717,24 @@ class Bot(sc2.BotAI):
                             if self.evoked.get((unit.tag, "desire_add_vector"), None) is None:
                                 dist = random.randint(5, 9)
                                 dist_x = random.randint(2, dist)
-                                dist_y = math.sqrt(dist ** 2 - dist_x ** 2) if random.randint(0, 1) == 0 else -math.sqrt(
-                                    dist ** 2 - dist_x ** 2)
+                                dist_y = math.sqrt(dist ** 2 - dist_x ** 2) if random.randint(0, 1) == 0 else -math.sqrt(dist ** 2 - dist_x ** 2)
                                 desire_add_vector = Point2((-dist_x, dist_y))
                                 desired_pos = my_groups[0].center + desire_add_vector
                                 desired_pos = Point2((self.clamp(desired_pos.x, 0, self.map_width),
-                                               self.clamp(desired_pos.y, 0, self.map_height)))
+                                                      self.clamp(desired_pos.y, 0, self.map_height)))
                                 self.evoked[("group_center")] = my_groups[0].center
                                 self.evoked[(unit.tag, "desire_add_vector")] = desire_add_vector
                                 actions.append(unit.move(desired_pos))
                             else:
-                                if my_groups[0].center.distance_to(self.evoked.get(("group_center"), None)) > 3:
+                                if my_groups[0].center.distance_to(self.evoked.get(("group_center"), None)) > 5:
                                     self.evoked[("group_center")] = my_groups[0].center
-                                desired_pos = self.evoked.get(("group_center"), None) + self.evoked.get((unit.tag, "desire_add_vector"), None)
-                                if int(unit.position.x) == int(desired_pos.x) and int(unit.position.y) == int(desired_pos.y):
+                                desired_pos = self.evoked.get(("group_center"), None) + self.evoked.get(
+                                    (unit.tag, "desire_add_vector"), None)
+                                if int(unit.position.x) == int(desired_pos.x) and int(unit.position.y) == int(
+                                        desired_pos.y):
                                     actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
                                 else:
                                     actions.append(unit.move(desired_pos))
-
 
                 # 시즈모드 시탱
                 if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
@@ -740,11 +766,9 @@ class Bot(sc2.BotAI):
                         else:
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
                     # 만약 방어적일때 그룹 센터가 일정 거리 이상(3)달라지면 시즈모드 풀기(이동 준비)
-                    '''
                     elif my_groups:
-                        if my_groups[0].center.distance_to(self.evoked.get(("group_center"), None)) > 3:
+                        if my_groups[0].center.distance_to(self.evoked.get(("group_center"), None)) > 5:
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
-                    '''
 
                 ## SIEGE TANK END ##
 
@@ -843,7 +867,7 @@ class Bot(sc2.BotAI):
                         if not self.known_enemy_units.filter(lambda e: e.is_flying).empty:
                             def target_func(unit):
                                 target = \
-                                self.known_enemy_units.filter(lambda e: e.is_flying).sorted(lambda e: e.health)[0]
+                                    self.known_enemy_units.filter(lambda e: e.is_flying).sorted(lambda e: e.health)[0]
                                 return target
 
                             actions = self.moving_shot(actions, unit, 15, target_func)
@@ -979,8 +1003,8 @@ class Bot(sc2.BotAI):
                         target) < 15 and unit.energy > 75 and self.army_strategy is ArmyStrategy.OFFENSE:  # 적들이 근처에 있고 마나도 있으면
                     known_only_enemy_units = self.known_enemy_units.not_structure
                     if known_only_enemy_units.exists:  # 보이는 적이 있다면
-                        enemy_amount = self.known_only_enemy_units.amount
-                        not_antiarmor_enemy = self.known_only_enemy_units.filter(
+                        enemy_amount = known_only_enemy_units.amount
+                        not_antiarmor_enemy = known_only_enemy_units.filter(
                             # anitarmor가 아니면서 가능대상에서 1초가 지났을 때...
                             lambda unit: self.time - self.evoked.get((unit.tag, "ANTIARMOR_POSSIBLE"), 0) >= 1.0
                             # (not unit.has_buff(BuffId.RAVENSHREDDERMISSILEARMORREDUCTION)) and
@@ -1159,7 +1183,7 @@ class Bot(sc2.BotAI):
 
                     if threats.empty and (
                             self.time - self.evoked.get((unit.tag, "BANSHEE_CLOAK"), 0.0) >= 10) and unit.has_buff(
-                            BuffId.BANSHEECLOAK):
+                        BuffId.BANSHEECLOAK):
                         actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
 
             # 지게로봇
@@ -1170,16 +1194,16 @@ class Bot(sc2.BotAI):
             if unit.type_id is UnitTypeId.MULE:
                 if self.cc.health < self.cc.health_max:
                     # 커맨드 수리
-                    actions.append(unit(AbilityId.EFFECT_REPAIR_MULE , self.cc))
+                    actions.append(unit(AbilityId.EFFECT_REPAIR_MULE, self.cc))
                 else:
                     # 근처 수리 가능한 메카닉 애들을 찾아 수리
                     # 아마 커맨드 근처에 있는 애들이 될 것임.
                     # 어차피 일정 시간 뒤 파괴되므로 HP가 가장 적은 애들을 찾는 것보다는 근처 애들이 나음
-                    repair_candidate = self.units.not_structure.filter(lambda u: u.is_mechanical and u.health < u.health_max)
+                    repair_candidate = self.units.not_structure.filter(
+                        lambda u: u.is_mechanical and u.health < u.health_max)
                     if not repair_candidate.empty:
                         repair_target = repair_candidate.closest_to(unit)
-                        actions.append(unit(AbilityId.EFFECT_REPAIR_MULE , repair_target))
-
+                        actions.append(unit(AbilityId.EFFECT_REPAIR_MULE, repair_target))
 
         return actions
 
@@ -1187,7 +1211,7 @@ class Bot(sc2.BotAI):
         if self.sock is not None:
             score = 1. if game_result is Result.Victory else -1.
             self.sock.send_multipart((
-                CommandType.SCORE, 
+                CommandType.SCORE,
                 pickle.dumps(self.game_id),
                 pickle.dumps(score),
             ))

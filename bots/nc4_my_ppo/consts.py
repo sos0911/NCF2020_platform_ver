@@ -20,7 +20,6 @@ class CommandType(bytes, Enum):
 class EconomyStrategy(Enum):
     MARINE = UnitTypeId.MARINE
     MARAUDER = UnitTypeId.MARAUDER
-    #REAPER = UnitTypeId.REAPER
     GHOST = UnitTypeId.GHOST
     HELLION = UnitTypeId.HELLION
     SIEGETANK = UnitTypeId.SIEGETANK
@@ -32,6 +31,7 @@ class EconomyStrategy(Enum):
     BATTLECRUISER = UnitTypeId.BATTLECRUISER
     #MULE = UnitTypeId.MULE # 나중에 추가
     NUKE = UnitTypeId.NUKE # 무적권 마지막에
+    #REAPER = UnitTypeId.REAPER
 
 EconomyStrategy.to_index = dict()
 EconomyStrategy.to_type_id = dict()
