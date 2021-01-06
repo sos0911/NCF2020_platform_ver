@@ -141,7 +141,7 @@ class Bot(sc2.BotAI):
 
     async def on_unit_destroyed(self, unit_tag):
         """ Override this in your bot class. """
-        self.enemy_exists.pop((unit_tag), None)
+        self.enemy_exists.pop(unit_tag, None)
 
     async def on_step(self, iteration: int):
         """
@@ -204,7 +204,7 @@ class Bot(sc2.BotAI):
         state[5 + len(EconomyStrategy) - 1] = self.has_nuke
 
         # wonseok add #
-        for type_id in self.enemy_exists.values() :
+        for type_id in self.enemy_exists.values():
             if type_id is UnitTypeId.THORAP:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
             elif type_id is UnitTypeId.VIKINGASSAULT:
@@ -429,9 +429,10 @@ class Bot(sc2.BotAI):
                     self.evoked[("scout_unit_tag")] = self.units(UnitTypeId.HELLION).first.tag
                     scout_unit_tag = self.evoked.get(("scout_unit_tag"))
 
-        # 상대 목록
-        for unit in self.known_enemy_units.not_structure :
-            self.enemy_exists[unit.tag] = unit.type_id
+        # 상대 목록 갱신
+        for unit in self.known_enemy_units.not_structure:
+            if self.enemy_exists.get(unit.tag, None) is None:
+                self.enemy_exists[unit.tag] = unit.type_id
 
         if not self.units.not_structure.empty:
             my_groups = self.unit_groups()
