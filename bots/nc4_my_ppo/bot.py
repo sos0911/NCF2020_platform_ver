@@ -51,7 +51,7 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         # wonseok add #
-        self.fc1 = nn.Linear(5 + len(EconomyStrategy) * 2 + 1, 64)
+        self.fc1 = nn.Linear(5 + len(EconomyStrategy) * 2, 64)
         # wonseok end #
         self.norm1 = nn.LayerNorm(64)
         self.fc2 = nn.Linear(64, 64)
@@ -164,7 +164,8 @@ class Bot(sc2.BotAI):
         self.cached_known_enemy_units = self.known_enemy_units()
         self.cached_known_enemy_structures = self.known_enemy_structures()
 
-        actions += self.train_action()
+        actions += await self.train_action()
+        #actions += self.train_action()
         actions += await self.unit_actions()
 
         # 공격 모드가 아닌 기타 모드일때
@@ -185,7 +186,7 @@ class Bot(sc2.BotAI):
         #
 
         # 적 reaper state를 기록하기 위한 +1
-        state = np.zeros(5 + len(EconomyStrategy) * 2 + 1, dtype=np.float32)
+        state = np.zeros(5 + len(EconomyStrategy) * 2, dtype=np.float32)
         state[0] = self.cc.health_percentage
         state[1] = min(1.0, self.minerals / 1000)
         state[2] = min(1.0, self.vespene / 1000)
@@ -211,14 +212,12 @@ class Bot(sc2.BotAI):
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.VIKINGFIGHTER.value]] += 1
             elif type_id is UnitTypeId.SIEGETANKSIEGED:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.SIEGETANK.value]] += 1
-            elif type_id is UnitTypeId.REAPER:
-                # 리퍼 예외처리
-                # 에러 방지 : economystate에 reaper가 없음
-                state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[UnitTypeId.NUKE.value] + 1] += 1
             else:
-                state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[unit.type_id]] += 1
+                state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[type_id]] += 1
 
-        state[5 + len(EconomyStrategy) * 2 - 1] = False
+        # 적이 핵을 갖고 있는지 안 갖고 있는지는 알 방법이 없다.
+        # 0으로 세팅.
+        # state[5 + len(EconomyStrategy) * 2 - 1] = False
         state = state.reshape(1, -1)
         # wonseok end #
 
@@ -244,7 +243,7 @@ class Bot(sc2.BotAI):
         army_strategy = ArmyStrategy(action % len(ArmyStrategy))
         return economy_strategy, army_strategy
 
-    def train_action(self):
+    async def train_action(self):
         #
         # 사령부 명령 생성
         #
@@ -259,7 +258,8 @@ class Bot(sc2.BotAI):
                 self.evoked[(self.cc.tag, 'train')] = self.time
         # 지게로봇
         elif next_unit == EconomyStrategy.MULE.value:
-            if self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE):
+            if await self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE) and self.time - self.evoked.get(
+                    (self.cc.tag, 'train'), 0) > 1.0:
                 mule_summon_point = await self.find_placement(UnitTypeId.COMMANDCENTER, self.cc.position)
                 # MULE 소환
                 actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
@@ -458,28 +458,21 @@ class Bot(sc2.BotAI):
             else:
                 self.army_strategy = self.next_army_strategy
 
-            if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK):
-                if unit.type_id is UnitTypeId.HELLION :
-                    if unit.tag == self.evoked.get(("scout_unit_tag")) :
-                        pass
-                elif self.army_strategy is ArmyStrategy.DEFENSE and not self.evoked.get((unit.tag, "offense_mode"),
+            if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK) and not self.evoked.get((unit.tag, "offense_mode"),
                                                                                       False):
+                if unit.type_id is UnitTypeId.HELLION and unit.tag == self.evoked.get(("scout_unit_tag")):
+                    pass
+                elif self.army_strategy is ArmyStrategy.DEFENSE:
                     move_position = self.cc.position
                     # move와 attack 둘 중 뭐가 나을까..?
                     actions.append(unit.attack(move_position))
-                elif self.army_strategy is ArmyStrategy.READY_LEFT and not self.evoked.get((unit.tag, "offense_mode"),
-                                                                                      False):
-
+                elif self.army_strategy is ArmyStrategy.READY_LEFT:
                     actions.append(unit.move(self.ready_left))
                 
-                elif self.army_strategy is ArmyStrategy.READY_CENTER and not self.evoked.get((unit.tag, "offense_mode"),
-                                                                                      False):
-                    
+                elif self.army_strategy is ArmyStrategy.READY_CENTER:
                     actions.append(unit.move(self.ready_center))
 
-                elif self.army_strategy is ArmyStrategy.READY_CENTER and not self.evoked.get((unit.tag, "offense_mode"),
-                                                                                      False):
-
+                elif self.army_strategy is ArmyStrategy.READY_RIGHT:
                     actions.append(unit.move(self.ready_right))
 
             ## 의료선과 밤까마귀 아니면 ...
@@ -755,7 +748,7 @@ class Bot(sc2.BotAI):
                             def target_func(unit):
 
                                 selected_enemies = self.known_enemy_units.filter(
-                                    lambda u: u.is_visible and not eunit.is_flying)
+                                    lambda u: u.is_visible and not u.is_flying)
                                 if selected_enemies.empty:
                                     return self.enemy_cc
                                 else:
@@ -788,9 +781,9 @@ class Bot(sc2.BotAI):
                                 self.evoked[(unit.tag, "desire_add_vector")] = desire_add_vector
                                 actions.append(unit.move(desired_pos))
                             else:
-                                if my_groups[0].center.distance_to(self.evoked.get(("group_center"), None)) > 5:
+                                if my_groups[0].center.distance_to(self.evoked.get(("group_center"), self.cc.position)) > 5:
                                     self.evoked[("group_center")] = my_groups[0].center
-                                desired_pos = self.evoked.get(("group_center"), None) + self.evoked.get(
+                                desired_pos = self.evoked.get(("group_center"), self.cc.position) + self.evoked.get(
                                     (unit.tag, "desire_add_vector"), None)
                                 if int(unit.position.x) == int(desired_pos.x) and int(unit.position.y) == int(
                                         desired_pos.y):
@@ -829,7 +822,7 @@ class Bot(sc2.BotAI):
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
                     # 만약 방어적일때 그룹 센터가 일정 거리 이상(3)달라지면 시즈모드 풀기(이동 준비)
                     elif my_groups:
-                        if my_groups[0].center.distance_to(self.evoked.get(("group_center"), None)) > 5:
+                        if my_groups[0].center.distance_to(self.evoked.get(("group_center"), self.cc.position)) > 5:
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
 
                 ## SIEGE TANK END ##
@@ -886,7 +879,6 @@ class Bot(sc2.BotAI):
                             #print(unit.is_idle, unit.is_moving)
                             
                             other_units = self.units - {unit}
-                            print(other_units.closer_than(4, unit).exists)
                             if (unit.is_idle or other_units.closer_than(4, unit).exists) and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 3.0 :
                                 #print("Move")
                                 next = self.evoked.get((unit.tag, "scout"))[0]
@@ -1139,8 +1131,8 @@ class Bot(sc2.BotAI):
                         target) < 15 and unit.energy > 75 and self.army_strategy is ArmyStrategy.OFFENSE:  # 적들이 근처에 있고 마나도 있으면
                     known_only_enemy_units = self.known_enemy_units.not_structure
                     if known_only_enemy_units.exists:  # 보이는 적이 있다면
-                        enemy_amount = self.known_only_enemy_units.amount
-                        not_antiarmor_enemy = self.known_only_enemy_units.filter(
+                        enemy_amount = known_only_enemy_units.amount
+                        not_antiarmor_enemy = known_only_enemy_units.filter(
                             # anitarmor가 아니면서 가능대상에서 1초가 지났을 때...
                             lambda unit: self.time - self.evoked.get((unit.tag, "ANTIARMOR_POSSIBLE"), 0) >= 1.0
                             # (not unit.has_buff(BuffId.RAVENSHREDDERMISSILEARMORREDUCTION)) and

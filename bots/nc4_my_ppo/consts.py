@@ -29,9 +29,9 @@ class EconomyStrategy(Enum):
     BANSHEE = UnitTypeId.BANSHEE
     RAVEN = UnitTypeId.RAVEN
     BATTLECRUISER = UnitTypeId.BATTLECRUISER
+    REAPER = UnitTypeId.REAPER # 일단 사신을 살려놔 보자.
     MULE = UnitTypeId.MULE # 지게로봇
     NUKE = UnitTypeId.NUKE # 무적권 마지막에
-    #REAPER = UnitTypeId.REAPER # 사신은 아예 사용하지 않는다.
 
 EconomyStrategy.to_index = dict()
 EconomyStrategy.to_type_id = dict()
@@ -43,8 +43,10 @@ for idx, strategy in enumerate(EconomyStrategy):
 
 class ArmyStrategy(Enum):
     DEFENSE = 0
-    READY = 1 
-    OFFENSE = 2
+    READY_LEFT = 1
+    READY_CENTER = 2
+    READY_RIGHT = 3
+    OFFENSE = 4
 
 Sample = namedtuple('Sample', 's, a, r, done, logp, value')
 
