@@ -23,6 +23,7 @@ import numpy as np
 from IPython import embed
 
 from ..nc3_simple3.bot import Bot as OppBot
+from ..nc4_simple_ppo.bot import Bot as Opp2Bot
 from .bot import Bot as MyBot
 from .consts import CommandType
 from sc2_utils import kill_children_processes
@@ -309,7 +310,7 @@ class Actor:
                     # 불가: players = [_Bot(), _Bot()], 가능 players[0] = _Bot(); players[1] = _Bot()
                     step_interval = task_dict['step_interval']
                     players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock))
-                    players[1] = _Bot(Race.Terran, OppBot())
+                    players[1] = _Bot(Race.Terran, Opp2Bot())
 
                     # 게임 세팅이 완료되면 event를 set해서 join 쪽도 다음 과정을 진행하도록 함
                     aio_event.set()

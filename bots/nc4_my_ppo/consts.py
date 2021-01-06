@@ -29,9 +29,9 @@ class EconomyStrategy(Enum):
     BANSHEE = UnitTypeId.BANSHEE
     RAVEN = UnitTypeId.RAVEN
     BATTLECRUISER = UnitTypeId.BATTLECRUISER
-    #MULE = UnitTypeId.MULE # 나중에 추가
+    MULE = UnitTypeId.MULE # 지게로봇
     NUKE = UnitTypeId.NUKE # 무적권 마지막에
-    #REAPER = UnitTypeId.REAPER
+    #REAPER = UnitTypeId.REAPER # 사신은 아예 사용하지 않는다.
 
 EconomyStrategy.to_index = dict()
 EconomyStrategy.to_type_id = dict()

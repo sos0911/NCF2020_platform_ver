@@ -43,12 +43,7 @@ class Bot(sc2.BotAI):
         #
         if len(self.build_order) == 0:
             for _ in range(1):
-                self.build_order.append(UnitTypeId.RAVEN)
-            for _ in range(1):
-                self.build_order.append(UnitTypeId.SIEGETANK)
-            for _ in range(1):
-                self.build_order.append(UnitTypeId.THOR)
-
+                self.build_order.append(UnitTypeId.MULE)
 
 
         #
@@ -58,9 +53,14 @@ class Bot(sc2.BotAI):
         ccs = ccs.idle  # 실행중인 명령이 없는 사령부 검색
         if ccs.exists:  # 사령부가 하나이상 존재할 경우
             cc = ccs.first  # 첫번째 사령부 선택
-            if self.can_afford(self.build_order[0]) and self.time - self.evoked.get((cc.tag, 'train'), 0) > 1.0 and self.evoked.get("train", 0) < 3:
+            if self.can_afford(self.build_order[0]) and self.time - self.evoked.get((cc.tag, 'train'), 0) > 1.0 and self.evoked.get("train", 0) < 1:
                 # 해당 유닛 생산 가능하고, 마지막 명령을 발행한지 1초 이상 지났음
-                actions.append(cc.train(self.build_order[0]))  # 첫 번째 유닛 생산 명령
+                if self.build_order[0] == UnitTypeId.MULE:
+                    if self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE):
+                        mule_summon_point = await self.find_placement(UnitTypeId.MULE, self.cc.position)
+                        # MULE 소환
+                        actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
+                # actions.append(cc.train(self.build_order[0]))  # 첫 번째 유닛 생산 명령
                 del self.build_order[0]  # 빌드오더에서 첫 번째 유닛 제거
                 self.evoked["train"] += 1
                 self.evoked[(cc.tag, 'train')] = self.time

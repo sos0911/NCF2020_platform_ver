@@ -250,12 +250,20 @@ class Bot(sc2.BotAI):
         #
         actions = list()
         next_unit = self.economy_strategy
+        # 핵
         if next_unit == EconomyStrategy.NUKE.value:
             if self.can_afford(AbilityId.BUILD_NUKE) and not self.has_nuke and self.time - self.evoked.get(
                     (self.cc.tag, 'train'), 0) > 1.0:
                 actions.append(self.cc(AbilityId.BUILD_NUKE))
                 self.has_nuke = True
                 self.evoked[(self.cc.tag, 'train')] = self.time
+        # 지게로봇
+        elif next_unit == EconomyStrategy.MULE.value:
+            if self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE):
+                mule_summon_point = await self.find_placement(UnitTypeId.MULE, self.cc.position)
+                # MULE 소환
+                actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
+        # 나머지
         elif self.can_afford(next_unit):
             if self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0:
                 # 해당 유닛 생산 가능하고, 마지막 명령을 발행한지 1초 이상 지났음
@@ -406,19 +414,18 @@ class Bot(sc2.BotAI):
         # actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, loc))
 
         # 정찰할 화염차 선택
-        if self.units(UnitTypeId.HELLION).exists :
+        if self.units(UnitTypeId.HELLION).exists:
             scout_unit_tag = self.evoked.get(("scout_unit_tag"), -1)
-            if scout_unit_tag == -1 :
+            if scout_unit_tag == -1:
                 self.evoked[("scout_unit_tag")] = self.units(UnitTypeId.HELLION).first.tag
                 scout_unit_tag = self.evoked.get(("scout_unit_tag"))
-            elif not scout_unit_tag == -1 :  
+            else:
                 scout_exist = False
-                for unit in self.units(UnitTypeId.HELLION) :
-                    if scout_unit_tag == unit.tag :
+                for unit in self.units(UnitTypeId.HELLION):
+                    if scout_unit_tag == unit.tag:
                         scout_exist = True
                         break
-
-                if scout_exist == False :
+                if not scout_exist:
                     self.evoked[("scout_unit_tag")] = self.units(UnitTypeId.HELLION).first.tag
                     scout_unit_tag = self.evoked.get(("scout_unit_tag"))
 
