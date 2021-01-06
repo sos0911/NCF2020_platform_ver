@@ -260,7 +260,7 @@ class Bot(sc2.BotAI):
         # 지게로봇
         elif next_unit == EconomyStrategy.MULE.value:
             if self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE):
-                mule_summon_point = await self.find_placement(UnitTypeId.MULE, self.cc.position)
+                mule_summon_point = await self.find_placement(UnitTypeId.COMMANDCENTER, self.cc.position)
                 # MULE 소환
                 actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
         # 나머지
