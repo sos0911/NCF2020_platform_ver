@@ -172,9 +172,13 @@ class Bot(sc2.BotAI):
         # offense_mode가 될지 말지 정함
         # 하나라도 트리거가 된다면 모두 트리거가 된다.
         for unit in self.units.not_structure:
-            if self.select_mode(unit) :
+            if self.select_mode(unit):
                 # 모든 유닛이 트리거 작동
+                # 정찰 중인 벌쳐만 빼고..
                 for unit in self.units.not_structure:
+                    if self.evoked.get(("scout_unit_tag"), None) is not None and unit.tag == self.evoked.get(("scout_unit_tag")):
+                        self.evoked[(unit.tag, "offense_mode")] = False
+                        continue
                     self.evoked[(unit.tag, "offense_mode")] = True
                 break
 
@@ -294,8 +298,9 @@ class Bot(sc2.BotAI):
         return threats
 
     def select_mode(self, unit: Unit):
-        # 정찰중인 첫 벌쳐는 제외
+        # 정찰중인 벌쳐는 제외
         if unit.tag == self.evoked.get(("scout_unit_tag")):
+            self.evoked[(unit.tag, "offense_mode")] = False
             return False
         # 방어모드일때 공격모드로 전환될지 트리거 세팅
         # 방어모드라면 False, 공격모드로 바뀐다면 True return
@@ -418,6 +423,7 @@ class Bot(sc2.BotAI):
             scout_unit_tag = self.evoked.get(("scout_unit_tag"), -1)
             if scout_unit_tag == -1:
                 self.evoked[("scout_unit_tag")] = self.units(UnitTypeId.HELLION).first.tag
+                self.evoked[(self.units(UnitTypeId.HELLION).first.tag, "offense_mode")] = False
                 scout_unit_tag = self.evoked.get(("scout_unit_tag"))
             else:
                 scout_exist = False
@@ -427,7 +433,9 @@ class Bot(sc2.BotAI):
                         break
                 if not scout_exist:
                     self.evoked[("scout_unit_tag")] = self.units(UnitTypeId.HELLION).first.tag
+                    self.evoked[(self.units(UnitTypeId.HELLION).first.tag, "offense_mode")] = False
                     scout_unit_tag = self.evoked.get(("scout_unit_tag"))
+
 
         # 상대 목록 갱신
         for unit in self.known_enemy_units.not_structure:
@@ -781,7 +789,7 @@ class Bot(sc2.BotAI):
                                 self.evoked[(unit.tag, "desire_add_vector")] = desire_add_vector
                                 actions.append(unit.move(desired_pos))
                             else:
-                                if my_groups[0].center.distance_to(self.evoked.get(("group_center"), self.cc.position)) > 5:
+                                if my_groups[0].center.distance_to(self.evoked.get(("group_center"), self.cc.position)) > 10:
                                     self.evoked[("group_center")] = my_groups[0].center
                                 desired_pos = self.evoked.get(("group_center"), self.cc.position) + self.evoked.get(
                                     (unit.tag, "desire_add_vector"), None)
@@ -820,9 +828,9 @@ class Bot(sc2.BotAI):
                         # 보이는 애들이 없으면 다시 시즈모드를 푼다.
                         else:
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
-                    # 만약 방어적일때 그룹 센터가 일정 거리 이상(3)달라지면 시즈모드 풀기(이동 준비)
-                    elif my_groups:
-                        if my_groups[0].center.distance_to(self.evoked.get(("group_center"), self.cc.position)) > 5:
+                    # 어느 때라도 상관없이 그룹 센터가 일정 거리 이상(5)달라지면 시즈모드 풀기(이동 준비)
+                    if my_groups:
+                        if my_groups[0].center.distance_to(self.evoked.get(("group_center"), self.cc.position)) > 10:
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
 
                 ## SIEGE TANK END ##
@@ -877,12 +885,13 @@ class Bot(sc2.BotAI):
                                         actions.append(unit.move(self.ready_right))
 
                             #print(unit.is_idle, unit.is_moving)
-                            
+
+                            # 적, 아군 통틀어 어떤 유닛이라도 만나면 정찰 방향 수정
                             other_units = self.units - {unit}
-                            if (unit.is_idle or other_units.closer_than(4, unit).exists) and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 3.0 :
+                            if (unit.is_idle or other_units.closer_than(4, unit).exists or self.known_enemy_units.closer_than(unit.sight_range, unit).exists) \
+                                    and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 3.0 :
                                 #print("Move")
                                 next = self.evoked.get((unit.tag, "scout"))[0]
-                                
 
                                 if next == "Center":
                                     actions.append(unit.move(self.enemy_cc))
