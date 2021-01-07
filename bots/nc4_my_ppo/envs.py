@@ -28,6 +28,9 @@ from .bot import Bot as MyBot
 from .consts import CommandType
 from sc2_utils import kill_children_processes
 
+from random import sample
+import pathlib
+import os
 
 def device_func(context, frontend_addr, backend_addr):
     # ZMQ queue device
@@ -309,8 +312,23 @@ class Actor:
                     # 절대 여기서 새로 생성하지 말고 업데이트만 해야함, 
                     # 불가: players = [_Bot(), _Bot()], 가능 players[0] = _Bot(); players[1] = _Bot()
                     step_interval = task_dict['step_interval']
+                    
+                    # pool
+                    pool = set(["Opp2Bot", "OppBot"])
+                    for i in range(1, 11) :
+                        model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
+                        if os.path.isfile(model_path) :
+                            pool.add(str(i))
+
                     players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock))
-                    players[1] = _Bot(Race.Terran, Opp2Bot())
+
+                    bot_str = sample(pool, 1)[0]
+                    if bot_str == "OppBot" :
+                        players[1] = _Bot(Race.Terran, OppBot())
+                    elif bot_str == "Opp2Bot" :
+                        players[1] = _Bot(Race.Terran, Opp2Bot())
+                    else :
+                        players[1] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock, bot_str))
 
                     # 게임 세팅이 완료되면 event를 set해서 join 쪽도 다음 과정을 진행하도록 함
                     aio_event.set()

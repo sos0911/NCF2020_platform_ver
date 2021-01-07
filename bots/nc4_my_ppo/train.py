@@ -47,6 +47,8 @@ from .consts import MessageType
 from sc2_utils import keyboard, backup_dir, get_memory_usage, get_memory_usage_delta, kill_children_processes
 from sc2_utils.ascii_plot import draw_sparkline
 
+from bots.nc4_simple_ppo import envs as nc4_simple_ppo_envs
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -134,12 +136,26 @@ class Trainer:
         self.args = args
         self.device = args.device
         self.model = Model().to(self.device)
+
+        
+        # model load
+        #model_path = Path(__file__).parent / 'model.pt'
+        #checkpoint = torch.load(model_path) # gpu
+        #checkpoint = torch.load(model_path, map_location=torch.device('cpu')) # cpu
+        #self.model.load_state_dict(checkpoint)
+        # model load end
+        
+
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.lr, amsgrad=True)
         self.writer = SummaryWriter()
         self.scores = deque(maxlen=250)
         self.saved_model_score = -1e10
         self._scores = deque(maxlen=10000)
         self.n_errors = 0
+
+        # for pool
+        self.mean_score = -1
+        self.mybot_version = 1
 
         self.env = Environment(args)
         self.batch_buffer = list()
@@ -171,7 +187,7 @@ class Trainer:
 
             if cmd == CommandType.REQ_TASK:
                 task_dict = dict(
-                    game_map=args.game_map,
+                    game_map=args.game_map
                 )
                 self.env.set_task(task_dict)
                 continue
@@ -361,6 +377,8 @@ class Trainer:
         ]
         cprint(','.join(text))
 
+        self.mean_score = np.mean(self.scores)
+
         # 너무 오래된 trajectory batch_buffers에서 제거
         self.batch_buffer = [
             traj for traj in self.batch_buffer 
@@ -370,9 +388,14 @@ class Trainer:
         # trajectory 길이가 긴 순서대로 정렬
         self.batch_buffer = sorted(self.batch_buffer, key=lambda t: -len(t))
 
-        # 모델 저장
-        if np.mean(self.scores) > self.saved_model_score:
-            model_path = Path(__file__).parent / 'model.pt'
+        # 75%가 넘는 모델 저장
+        if np.mean(self.scores) > 0.5 :
+            model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
+            self.mybot_version = (self.mybot_version % 10) + 1
+
+        # 모델은 최고 모델로
+        if np.mean(self.scores) > self.saved_model_score :
+            model_path = Path(__file__).parent / ('model.pt')
             torch.save(self.model.state_dict(), model_path)
             self.saved_model_score = np.mean(self.scores)
 
@@ -413,6 +436,8 @@ if __name__ == '__main__':
     from .envs import Actor, Environment
 
     args = parse_arguments()
+    #print("@@@@", type(args))
+    #nc4_simple = ""
 
     # TODO: numpy seed
     # TODO: torch seed
@@ -423,6 +448,7 @@ if __name__ == '__main__':
     else:
         if args.n_actors <= 1:
             Actor(args).run(0)
+            #nc4_simple_ppo_envs.Actor(args).run(0)
         else:
             actors = [Actor(args) for _ in range(args.n_actors)]
             ps = [

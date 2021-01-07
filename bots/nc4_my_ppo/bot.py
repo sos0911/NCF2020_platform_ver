@@ -51,7 +51,7 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         # wonseok add #
-        self.fc1 = nn.Linear(5 + len(EconomyStrategy) * 2, 64)
+        self.fc1 = nn.Linear(5 + len(EconomyStrategy) * 2 + 1, 64)
         # wonseok end #
         self.norm1 = nn.LayerNorm(64)
         self.fc2 = nn.Linear(64, 64)
@@ -76,7 +76,7 @@ class Bot(sc2.BotAI):
     example v1과 유사하지만, 빌드 오더 대신, 유닛 비율을 맞추도록 유닛을 생산함
     """
 
-    def __init__(self, step_interval=5.0, host_name='', sock=None):
+    def __init__(self, step_interval=5.0, host_name='', sock=None, version=""):
         super().__init__()
         self.step_interval = step_interval
         self.host_name = host_name
@@ -84,7 +84,7 @@ class Bot(sc2.BotAI):
         if sock is None:
             try:
                 self.model = Model()
-                model_path = pathlib.Path(__file__).parent / 'model.pt'
+                model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
                 self.model.load_state_dict(
                     torch.load(model_path, map_location='cpu')
                 )
@@ -107,6 +107,8 @@ class Bot(sc2.BotAI):
         self.next_army_strategy = ArmyStrategy.DEFENSE
         # 현재 군대전략
         self.army_strategy = self.next_army_strategy
+        # offense mode?
+        self.offense_mode = False
         # 핵 보유?
         self.has_nuke = False
         self.map_height = 63
@@ -173,6 +175,8 @@ class Bot(sc2.BotAI):
         # 하나라도 트리거가 된다면 모두 트리거가 된다.
         for unit in self.units.not_structure:
             if self.select_mode(unit):
+                # for state
+                self.offense_mode = True
                 # 모든 유닛이 트리거 작동
                 # 정찰 중인 벌쳐만 빼고..
                 for unit in self.units.not_structure:
@@ -181,6 +185,8 @@ class Bot(sc2.BotAI):
                         continue
                     self.evoked[(unit.tag, "offense_mode")] = True
                 break
+            else :
+                self.offense_mode = False
 
         await self.do_actions(actions)
 
@@ -190,7 +196,7 @@ class Bot(sc2.BotAI):
         #
 
         # 적 reaper state를 기록하기 위한 +1
-        state = np.zeros(5 + len(EconomyStrategy) * 2, dtype=np.float32)
+        state = np.zeros(5 + (len(EconomyStrategy) * 2) + 1, dtype=np.float32)
         state[0] = self.cc.health_percentage
         state[1] = min(1.0, self.minerals / 1000)
         state[2] = min(1.0, self.vespene / 1000)
@@ -222,6 +228,10 @@ class Bot(sc2.BotAI):
         # 적이 핵을 갖고 있는지 안 갖고 있는지는 알 방법이 없다.
         # 0으로 세팅.
         # state[5 + len(EconomyStrategy) * 2 - 1] = False
+
+        # offense_mode
+        state[5 + len(EconomyStrategy) * 2] = self.offense_mode
+
         state = state.reshape(1, -1)
         # wonseok end #
 
