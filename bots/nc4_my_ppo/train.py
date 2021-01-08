@@ -224,7 +224,8 @@ class Trainer:
                     self.writer.add_scalar('perf/score', mean_score, self.frames)
                     self.writer.add_scalar('perf/win_ratio', (mean_score + 1.) / 2., self.frames)
 
-            # 데이터 저장
+            #
+            #  저장
             # 현재 데이터를 저장할 수 있는 trajectory 검색
             idx = -1
             for i, trajectory in enumerate(self.batch_buffer):
@@ -388,16 +389,21 @@ class Trainer:
         # trajectory 길이가 긴 순서대로 정렬
         self.batch_buffer = sorted(self.batch_buffer, key=lambda t: -len(t))
 
-        # 75%가 넘는 모델 저장
-        if np.mean(self.scores) > 0.5 :
-            model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
-            self.mybot_version = (self.mybot_version % 10) + 1
-
-        # 모델은 최고 모델로
-        if np.mean(self.scores) > self.saved_model_score :
-            model_path = Path(__file__).parent / ('model.pt')
-            torch.save(self.model.state_dict(), model_path)
+        # 모델은 최고 모델일때 갱신하거나 승률이 일정 퍼센티지 이상일 때 갱신하도록 함
+        # 좀 더 탐색하기 위함
+        # 그와는 별개로 역대 최고 모델 model_best.pt를 저장해 둠.
+        if np.mean(self.scores) > self.saved_model_score:
+            cur_model_path = Path(__file__).parent / ('model.pt')
+            torch.save(self.model.state_dict(), cur_model_path)
+            best_model_path = Path(__file__).parent / ('model_best.pt')
+            torch.save(self.model.state_dict(), best_model_path)
             self.saved_model_score = np.mean(self.scores)
+        elif np.mean(self.scores) > 0.5:
+            cur_model_path = Path(__file__).parent / ('model.pt')
+            torch.save(self.model.state_dict(), cur_model_path)
+            pool_model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
+            torch.save(self.model.state_dict(), pool_model_path)
+            self.mybot_version = (self.mybot_version % 10) + 1
 
     def stop(self):
         self.running = False

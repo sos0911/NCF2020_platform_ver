@@ -314,6 +314,7 @@ class Actor:
                     step_interval = task_dict['step_interval']
                     
                     # pool
+                    # pool은 oppbot, opp2bot + 최대 10개 = max 12개의 봇으로 구성
                     pool = set(["Opp2Bot", "OppBot"])
                     for i in range(1, 11) :
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
@@ -328,7 +329,7 @@ class Actor:
                     elif bot_str == "Opp2Bot" :
                         players[1] = _Bot(Race.Terran, Opp2Bot())
                     else :
-                        players[1] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock, bot_str))
+                        players[1] = _Bot(Race.Terran, MyBot(step_interval, hostname, None, bot_str))
 
                     # 게임 세팅이 완료되면 event를 set해서 join 쪽도 다음 과정을 진행하도록 함
                     aio_event.set()
