@@ -83,7 +83,6 @@ class Bot(sc2.BotAI):
         self.sock = sock
         if sock is None:
             try:
-                version = "10"
                 self.model = Model()
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
                 # print("use version : model ", version)
