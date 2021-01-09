@@ -830,32 +830,28 @@ class Bot(sc2.BotAI):
                 # 근처에 없으면 그냥 가까이 있는 지상유닛 아무나 때린다.
                 if unit.type_id is UnitTypeId.HELLION:
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
-                        if unit.tag == self.units(UnitTypeId.HELLION).first.tag :
-                            self.evoked[(unit.tag, "scout")] = []
-                        def target_func(unit):
-                            target = None
-                            min_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2) + 10
-                            for eunit in self.cached_known_enemy_units:
-                                if eunit.is_visible and not eunit.is_flying and eunit.distance_to(unit) < min_dist:
-                                    # 경장갑 우선 타겟팅
-                                    if target is not None and target.is_light and not eunit.is_light:
-                                        continue
-                                    target = eunit
-                                    min_dist = eunit.distance_to(unit)
-                            if target is None:
-                                enemies = self.known_enemy_units.filter(lambda e: e.is_visible)
 
-                                if not enemies.empty:
-                                    target = enemies.closest_to(unit)
-                                else:
-                                    target = self.enemy_cc
-                            return target
+                        def target_func(unit):
+                            # 경장갑 우선 타겟팅
+                            # 유닛 중 가장 가까운 애 때리기.
+                            # 경장갑이 없으면 나머지 중 가장 가까운 놈 때리기
+                            targets = self.cached_known_enemy_units.not_structure.not_flying
+                            if targets.empty:
+                                return self.enemy_cc # point2
+
+                            light_targets = targets.filter(lambda u: u.is_light)
+                            # 경장갑이 타겟 중에 없으니 나머지 중 가장 가까운 놈 때리기
+                            if light_targets.empty:
+                                return targets.sorted(lambda u: unit.distance_to(u))[0]
+                            # 경장갑
+                            else:
+                                return light_targets.sorted(lambda u: unit.distance_to(u))[0]
 
                         actions = self.moving_shot(actions, unit, 10, target_func)
-                    else:  # 정찰모드
-                        if unit.tag == self.evoked.get(("scout_unit_tag")) and self.time - self.evoked.get((unit.tag, "end_time"), 0.0) >= 10.0:
-                            if self.evoked.get((unit.tag, "scout"), []) == [] :
-                                self.evoked[(unit.tag, "scout")] = ["Center", "RightUp", "RightDown", "LeftDown", "LeftUp", "End"]
+                    # 내가 정찰용 화염차라면?
+                    elif unit.tag == self.evoked.get(("scout_unit_tag")) and self.time - self.evoked.get((unit.tag, "end_time"), 0.0) >= 10.0:
+                            if self.evoked.get((unit.tag, "scout_routine"), []) == [] :
+                                self.evoked[(unit.tag, "scout_routine")] = ["Center", "RightUp", "RightDown", "LeftDown", "LeftUp", "End"]
 
                             for eunit in self.cached_known_enemy_units:
                                 if unit.distance_to(eunit) <= unit.sight_range-2: # sight : 10, attack : 5
@@ -867,24 +863,22 @@ class Bot(sc2.BotAI):
                                         actions.append(unit.move(self.ready_center))
                                     elif self.army_strategy == ArmyStrategy.READY_RIGHT :
                                         actions.append(unit.move(self.ready_right))
-
-                            #print(unit.is_idle, unit.is_moving)
+                                    break
 
                             # 적, 아군 통틀어 어떤 유닛이라도 만나면 정찰 방향 수정
                             other_units = self.units - {unit}
                             if (unit.is_idle or other_units.closer_than(4, unit).exists or self.known_enemy_units.closer_than(unit.sight_range, unit).exists) \
                                     and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 3.0 :
-                                #print("Move")
-                                next = self.evoked.get((unit.tag, "scout"))[0]
+                                next = self.evoked.get((unit.tag, "scout_routine"))[0]
 
                                 if next == "Center":
                                     actions.append(unit.move(self.enemy_cc))
-                                    self.evoked[(unit.tag, "scout")] = self.evoked.get((unit.tag, "scout"))[1:]
+                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
 
                                 elif next == "RightUp" :
                                     if abs(unit.position.y - 31.5) > 5.0 :
                                         actions.append(unit.move(self.right_up))
-                                        self.evoked[(unit.tag, "scout")] = self.evoked.get((unit.tag, "scout"))[1:]
+                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
                                     else :
                                         actions.append(unit.move(Point2((unit.position.x, self.right_up.y))))
                                         
@@ -892,21 +886,21 @@ class Bot(sc2.BotAI):
                                 elif next == "RightDown" :
                                     if abs(unit.position.y - 31.5) > 5.0 :
                                         actions.append(unit.move(self.right_down))
-                                        self.evoked[(unit.tag, "scout")] = self.evoked.get((unit.tag, "scout"))[1:]
+                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
                                     else :
                                         actions.append(unit.move(Point2((unit.position.x, self.right_down.y))))
 
                                 elif next == "LeftDown" :
                                     if abs(unit.position.y - 31.5) > 5.0 :
                                         actions.append(unit.move(self.left_down))
-                                        self.evoked[(unit.tag, "scout")] = self.evoked.get((unit.tag, "scout"))[1:]
+                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
                                     else :
                                         actions.append(unit.move(Point2((unit.position.x, self.left_down.y))))
 
                                 elif next == "LeftUp" :
                                     if abs(unit.position.y - 31.5) > 5.0 :
                                         actions.append(unit.move(self.left_up))
-                                        self.evoked[(unit.tag, "scout")] = self.evoked.get((unit.tag, "scout"))[1:]
+                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
                                     else :
                                         actions.append(unit.move(Point2((unit.position.x, self.left_up.y))))
 
@@ -921,58 +915,57 @@ class Bot(sc2.BotAI):
                                         actions.append(unit.move(self.ready_right))
 
                                     self.evoked[(unit.tag), "end_time"] = self.time
-                                    self.evoked[(unit.tag, "scout")] = self.evoked.get((unit.tag, "scout"))[1:]
+                                    self.evoked[(unit.tag, "scout_routine")] = []
 
                                 self.evoked[(unit.tag, "scout_time")] = self.time
-                        '''    
-                        # evoke initialize
 
-                        if (unit.tag, "scout") not in self.evoked:
-                            self.evoked[(unit.tag, "scout")] = False
+                        # # evoke initialize
+                        #
+                        # if (unit.tag, "scout") not in self.evoked:
+                        #     self.evoked[(unit.tag, "scout")] = False
+                        #
+                        # if self.evoked.get((unit.tag, "scout"), False):
+                        #     # 아무것도 하지 않을 때
+                        #     # 목표 지점에 도달한 것도 포함
+                        #     if unit.is_idle:
+                        #         self.evoked[(unit.tag, "scout")] = False
+                        #     # 적을 만났을 때
+                        #
+                        #
+                        # # 정찰 중이 아닐 때 정찰나감
+                        # if not self.evoked.get((unit.tag, "scout"), False):
+                        #     dest = None
+                        #     if unit.is_idle :
+                        #         if self.time - self.evoked.get(("scout_time"), -20) <= 10.0 :
+                        #             dest = Point2(
+                        #                 (random.randint(0, self.map_width), random.randint(0, self.map_height)))
+                        #             actions.append(unit.attack(dest))
+                        #         else:
+                        #             # 커맨드 invisible이면 우선 보이게 하는 것이 목적
+                        #
+                        #         self.evoked[(unit.tag, "scout")] = True
+                        #
+                        #     else:
+                        #
+                        #         # 정찰 중이 아닌데, 움직이고 있거나 공격 중일때 발생
+                        #         # 쿨타임 중에는 빠지기
+                        #         # 쿨타임이 차면 공격한 다음 빠지기
+                        #         # 단위가 frame
+                        #         def target_func(unit):
+                        #             target = None
+                        #             min_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2) + 10
+                        #             for eunit in self.cached_known_enemy_units:
+                        #                 if eunit.is_visible and not eunit.is_flying and eunit.distance_to(
+                        #                         unit) < min_dist:
+                        #                     # 경장갑 우선 타겟팅
+                        #                     if target is not None and target.is_light and not eunit.is_light:
+                        #                         continue
+                        #                     target = eunit
+                        #                     min_dist = eunit.distance_to(unit)
+                        #             return target
+                        #
+                        #         actions = self.moving_shot(actions, unit, 10, target_func)
 
-                        if self.evoked.get((unit.tag, "scout"), False):
-                            # 아무것도 하지 않을 때
-                            # 목표 지점에 도달한 것도 포함
-                            if unit.is_idle:
-                                self.evoked[(unit.tag, "scout")] = False
-                            # 적을 만났을 때
-                            
-
-                        # 정찰 중이 아닐 때 정찰나감
-                        if not self.evoked.get((unit.tag, "scout"), False):
-                            dest = None
-                            if unit.is_idle :
-                                if self.time - self.evoked.get(("scout_time"), -20) <= 10.0 :
-                                    dest = Point2(
-                                        (random.randint(0, self.map_width), random.randint(0, self.map_height)))
-                                    actions.append(unit.attack(dest))
-                                else:
-                                    # 커맨드 invisible이면 우선 보이게 하는 것이 목적
-                                    
-                                self.evoked[(unit.tag, "scout")] = True
-                        
-                            else:
-                                
-                                # 정찰 중이 아닌데, 움직이고 있거나 공격 중일때 발생
-                                # 쿨타임 중에는 빠지기
-                                # 쿨타임이 차면 공격한 다음 빠지기
-                                # 단위가 frame
-                                def target_func(unit):
-                                    target = None
-                                    min_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2) + 10
-                                    for eunit in self.cached_known_enemy_units:
-                                        if eunit.is_visible and not eunit.is_flying and eunit.distance_to(
-                                                unit) < min_dist:
-                                            # 경장갑 우선 타겟팅
-                                            if target is not None and target.is_light and not eunit.is_light:
-                                                continue
-                                            target = eunit
-                                            min_dist = eunit.distance_to(unit)
-                                    return target
-
-                                actions = self.moving_shot(actions, unit, 10, target_func)
-                            
-                        '''
 
                 # 바이킹 전투기 모드(공중)
                 if unit.type_id is UnitTypeId.VIKINGFIGHTER:
@@ -1035,6 +1028,7 @@ class Bot(sc2.BotAI):
                                     actions.append(unit.attack(self.enemy_cc))
 
                 # 바이킹 전투 모드(지상)
+                # 공격 우선순위 : 사정거리 내 탱크 > 지상유닛 > 공중유닛 > 적 커맨드
                 if unit.type_id is UnitTypeId.VIKINGASSAULT:
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
                         # 탱크가 가까이 있으면 공격
@@ -1044,36 +1038,28 @@ class Bot(sc2.BotAI):
 
                         if enemy_tanks.filter(lambda e: unit.distance_to(e) < 6.0).amount > 0:
                             actions.append(unit.attack(enemy_tanks.sorted(lambda e: e.health)[0]))
-
                         # 반대로 탱크가 멀리 있고 사정거리 내에 있다면?
                         # 탱크의 사정거리 내에 있으면(시즈 모드 거리에) 전투기 변환으로 공격 회피
                         elif enemy_tanks.filter(lambda e: unit.distance_to(e) < e.ground_range + 2).amount > 0:
                             actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
-
-
                         else:
-                            # 주위에 공중 유닛이 있다면 전투기로 변환하여 공격
-                            targets = self.cached_known_enemy_units.filter(
-                                lambda u: u.is_flying and unit.sight_range > unit.distance_to(u))
-                            if not targets.empty:
-                                actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
+                            def target_func(unit):
+                                ground_units = self.cached_known_enemy_units.not_flying.filter(
+                                    lambda e: e.is_visible)
 
+                                if not ground_units.empty:
+                                    return ground_units.closest_to(unit)
+
+                                return self.enemy_cc
+                            ground_enemy_units = self.cached_known_enemy_units.not_structure.not_flying
+                            # 2. 지상 유닛
+                            if not ground_enemy_units.empty:
+                                actions = self.moving_shot(actions, unit, 1, target_func, 0.5)
+                            # 3. 공중 유닛 + 커맨드
+                            # 적의 지상 유닛이 없고 보이는 공중 유닛이 있거나 그것도 없다면 전투기로 변환
+                            # 변환 후 로직은 공중 모드에 적혀 있다.
                             else:
-                                # 아무도 없으면 커맨드, 사정거리 내 지상유닛 누군가가 보인다면 그놈을 조지자
-                                ground_units = self.cached_known_enemy_units.not_flying.filter(lambda e: e.is_visible)
-                                if ground_units.empty:
-                                    actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
-                                else:
-                                    def target_func(unit):
-                                        ground_units = self.cached_known_enemy_units.not_flying.filter(
-                                            lambda e: e.is_visible)
-
-                                        if not ground_units.empty:
-                                            return ground_units.closest_to(unit)
-
-                                        return self.enemy_cc
-
-                                    actions = self.moving_shot(actions, unit, 1, target_func, 0.5)
+                                actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
 
                 ## REAPER ##
 
