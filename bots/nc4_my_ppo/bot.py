@@ -644,7 +644,7 @@ class Bot(sc2.BotAI):
                     elif self.evoked.get((unit.tag, "CHANGE_WEAPON"), 10.0) > 2.0:
                         flying_enemies = self.known_enemy_units.filter(lambda unit: unit.is_flying)  # 공중 유닛
                         if (flying_enemies.amount > 0 and flying_enemies.filter(
-                                lambda u: u.is_light) < flying_enemies.filter(lambda u: u.is_armored)):  # 경장갑이 적으면
+                                lambda u: u.is_light).amount < flying_enemies.filter(lambda u: u.is_armored).amount):  # 경장갑이 적으면
                             actions.append(unit(AbilityId.MORPH_THORHIGHIMPACTMODE))  # 250mm 천벌포로 교체
                             self.evoked[(unit.tag, "CHANGE_WEAPON")] = self.time
 
@@ -698,7 +698,7 @@ class Bot(sc2.BotAI):
                     elif self.evoked.get((unit.tag, "CHANGE_WEAPON"), 10.0) > 2.0:
                         flying_enemies = self.known_enemy_units.filter(lambda unit: unit.is_flying)  # 공중 유닛
                         if (flying_enemies.amount >= 0 and flying_enemies.filter(
-                                lambda u: u.is_light) > flying_enemies.filter(lambda u: u.is_armored)):  # 경장갑이 많으면
+                                lambda u: u.is_light).amount > flying_enemies.filter(lambda u: u.is_armored).amount):  # 경장갑이 많으면
                             actions.append(unit(AbilityId.MORPH_THOREXPLOSIVEMODE))  # 재블린 모드로 교체
                             self.evoked[(unit.tag, "CHANGE_WEAPON")] = self.time
 
@@ -760,11 +760,11 @@ class Bot(sc2.BotAI):
                     # 그룹 센터에서 거리는 왼쪽으로 랜덤으로 정해지되, 5-9 정도.
                     # 근처 위협이 있다면 무빙샷
                     def target_func(unit):
-                        selected_enemies = None
+                        selected_enemies = []
                         if self.cached_known_enemy_units.not_structure.exists:
                             selected_enemies = self.cached_known_enemy_units.not_structure.filter(
                                 lambda u: u.is_visible and not u.is_flying)
-                        if selected_enemies is None:
+                        if selected_enemies.empty:
                             return self.enemy_cc
                         else:
                             return selected_enemies.closest_to(unit)
