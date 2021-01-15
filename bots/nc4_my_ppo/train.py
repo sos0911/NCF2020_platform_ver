@@ -139,10 +139,10 @@ class Trainer:
 
         
         # model load
-        #model_path = Path(__file__).parent / 'model.pt'
+        model_path = Path(__file__).parent / 'model.pt'
         #checkpoint = torch.load(model_path) # gpu
-        #checkpoint = torch.load(model_path, map_location=torch.device('cpu')) # cpu
-        #self.model.load_state_dict(checkpoint)
+        checkpoint = torch.load(model_path, map_location=torch.device('cpu')) # cpu
+        self.model.load_state_dict(checkpoint)
         # model load end
         
 
@@ -392,6 +392,12 @@ class Trainer:
         # 모델은 최고 모델일때 갱신하거나 승률이 일정 퍼센티지 이상일 때 갱신하도록 함
         # 좀 더 탐색하기 위함
         # 그와는 별개로 역대 최고 모델 model_best.pt를 저장해 둠.
+
+        # ## donghyun edited for test ##
+        # cur_model_path = Path(__file__).parent / ('model.pt')
+        # torch.save(self.model.state_dict(), cur_model_path)
+        # ## donghyun ended ##
+
         if np.mean(self.scores) > self.saved_model_score:
             cur_model_path = Path(__file__).parent / ('model.pt')
             torch.save(self.model.state_dict(), cur_model_path)
@@ -403,7 +409,7 @@ class Trainer:
             torch.save(self.model.state_dict(), cur_model_path)
             pool_model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
             torch.save(self.model.state_dict(), pool_model_path)
-            self.mybot_version = (self.mybot_version % 10) + 1
+            self.mybot_version = (self.mybot_version % 4) + 1
 
     def stop(self):
         self.running = False

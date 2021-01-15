@@ -24,6 +24,9 @@ from IPython import embed
 
 from ..nc3_simple3.bot import Bot as OppBot
 from ..nc4_simple_ppo.bot import Bot as Opp2Bot
+from ..nc1_simple_tank.bot import Bot as OppBotTank
+from ..nc1_simple_battle.bot import Bot as OppBotBattle
+
 from .bot import Bot as MyBot
 from .consts import CommandType
 from sc2_utils import kill_children_processes
@@ -315,8 +318,8 @@ class Actor:
                     
                     # pool
                     # pool은 oppbot, opp2bot + 최대 10개 = max 12개의 봇으로 구성
-                    pool = set(["Opp2Bot", "OppBot"])
-                    for i in range(1, 11) :
+                    pool = set(["Opp2Bot", "OppBot", "OppBotBattle", "OppBotBattle", "OppBotTank", "OppBotTank"])
+                    for i in range(1, 5) :
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
                         if os.path.isfile(model_path) :
                             pool.add(str(i))
@@ -328,6 +331,10 @@ class Actor:
                         players[1] = _Bot(Race.Terran, OppBot())
                     elif bot_str == "Opp2Bot" :
                         players[1] = _Bot(Race.Terran, Opp2Bot())
+                    elif bot_str == "OppBotBattle" :
+                        players[1] = _Bot(Race.Terran, OppBotBattle())
+                    elif bot_str == "OppBotTank" :
+                        players[1] = _Bot(Race.Terran, OppBotTank())
                     else :
                         players[1] = _Bot(Race.Terran, MyBot(step_interval, hostname, None, bot_str))
 

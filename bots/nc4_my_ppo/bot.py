@@ -81,17 +81,17 @@ class Bot(sc2.BotAI):
         self.step_interval = step_interval
         self.host_name = host_name
         self.sock = sock
+        ## donghyun edited ##
         if sock is None:
             try:
                 self.model = Model()
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
-                # print("use version : model ", version)
-                self.model.load_state_dict(
-                    torch.load(model_path, map_location='cpu')
-                )
+                #self.model.load_state_dict(torch.load(model_path)) # gpu
+                self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'))) # gpu
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()
+        ## donghyun end ##
 
     def on_start(self):
         """
@@ -343,8 +343,10 @@ class Bot(sc2.BotAI):
             if not unit.is_flying:
                 # 배틀크루저 예외처리.
                 threats = showing_only_enemy_units.filter(
-                    lambda u: (u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                    lambda u: ((unit.can_attack_ground and not u.is_flying) or (unit.can_attack_air and u.is_flying))
+                            and ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
                             u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u)))
+                    )
                 for eunit in threats:
                     if eunit.type_id is UnitTypeId.BATTLECRUISER:
                         maxrange = max(maxrange, 6)
@@ -360,8 +362,10 @@ class Bot(sc2.BotAI):
                         total_move_vector += move_vector
             else:
                 threats = showing_only_enemy_units.filter(
-                    lambda u: (u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                    lambda u: ((unit.can_attack_ground and not u.is_flying) or (unit.can_attack_air and u.is_flying))
+                            and ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
                             u.can_attack_air and u.air_range + 2 >= unit.distance_to(u)))
+                    )
                 for eunit in threats:
                     if eunit.type_id is UnitTypeId.BATTLECRUISER:
                         maxrange = max(maxrange, 6)
@@ -474,7 +478,7 @@ class Bot(sc2.BotAI):
                 if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
                     actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
 
-            else:
+            else :
                 self.army_strategy = self.next_army_strategy
 
             if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK) and not self.evoked.get((unit.tag, "offense_mode"),
@@ -746,13 +750,13 @@ class Bot(sc2.BotAI):
                             desired_pos = my_groups[0].center + desire_add_vector
                             desired_pos = Point2((self.clamp(desired_pos.x, 0, self.map_width),
                                                   self.clamp(desired_pos.y, 0, self.map_height)))
-                            self.evoked[("group_center")] = my_groups[0].center
+                            self.evoked[(unit.tag, "group_center")] = my_groups[0].center
                             self.evoked[(unit.tag, "desire_add_vector")] = desire_add_vector
                         else:
                             if my_groups[0].center.distance_to(
-                                    self.evoked.get(("group_center"), self.cc.position)) > 5:
-                                self.evoked[("group_center")] = my_groups[0].center
-                            desired_pos = self.evoked.get(("group_center"), self.cc.position) + self.evoked.get(
+                                    self.evoked.get((unit.tag, "group_center"), self.cc.position)) > 4:
+                                self.evoked[(unit.tag, "group_center")] = my_groups[0].center
+                            desired_pos = self.evoked.get((unit.tag, "group_center"), self.cc.position) + self.evoked.get(
                                 (unit.tag, "desire_add_vector"), None)
 
                     # 시즈탱크는 공격, 방어 상관없이 기본적으로 항상 정해진 그룹 센터 주변으로 포지셔닝
@@ -814,7 +818,7 @@ class Bot(sc2.BotAI):
 
                     # 어느 때라도 상관없이 그룹 센터가 일정 거리 이상(10)달라지면 시즈모드 풀기(이동 준비)
                     if my_groups:
-                        if my_groups[0].center.distance_to(self.evoked.get("group_center")) > 10:
+                        if my_groups[0].center.distance_to(self.evoked.get((unit.tag, "group_center"))) > 7:
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
 
                 ## SIEGE TANK END ##
