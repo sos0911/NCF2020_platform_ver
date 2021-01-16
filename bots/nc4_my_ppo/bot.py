@@ -86,8 +86,8 @@ class Bot(sc2.BotAI):
             try:
                 self.model = Model()
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
-                #self.model.load_state_dict(torch.load(model_path)) # gpu
-                self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'))) # gpu
+                self.model.load_state_dict(torch.load(model_path)) # gpu
+                #self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'))) # cpu
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()
@@ -102,12 +102,11 @@ class Bot(sc2.BotAI):
         self.evoked = dict()
         self.enemy_exists = dict()
 
+        # 현재 병영생산전략
         self.economy_strategy = EconomyStrategy.MARINE.value
-
-        # 다음 군대전략 설정
-        self.next_army_strategy = ArmyStrategy.DEFENSE
         # 현재 군대전략
-        self.army_strategy = self.next_army_strategy
+        self.army_strategy = ArmyStrategy.DEFENSE
+
         # offense mode?
         self.offense_mode = False
         # 핵 보유?
@@ -153,7 +152,7 @@ class Bot(sc2.BotAI):
         actions = list()  # 이번 step에 실행할 액션 목록
 
         if self.time - self.last_step_time >= self.step_interval:
-            self.economy_strategy, self.next_army_strategy = self.set_strategy()
+            self.economy_strategy, self.army_strategy = self.set_strategy()
             self.last_step_time = self.time
 
         # set info
@@ -166,9 +165,9 @@ class Bot(sc2.BotAI):
 
         self.cached_known_enemy_units = self.known_enemy_units()
         self.cached_known_enemy_structures = self.known_enemy_structures()
+        self.cc = self.units(UnitTypeId.COMMANDCENTER).first # 왠지는 모르겠는데 이걸 추가해야 실시간 tracking이 된다..
 
-        actions += await self.train_action()
-        #actions += self.train_action()
+        #actions += await self.train_action()
         actions += await self.unit_actions()
 
         # 공격 모드가 아닌 기타 모드일때
@@ -335,18 +334,20 @@ class Bot(sc2.BotAI):
 
         elif (margin_health == 0 or unit.health_percentage <= margin_health) and self.time - self.evoked.get(
                 (unit.tag, "COOLDOWN"), 0.0) >= minimum:  # 무빙을 해야한다면
-            # print("GOAL")
             maxrange = 0
             total_move_vector = Point2((0, 0))
             showing_only_enemy_units = self.known_enemy_units.not_structure.filter(lambda e: e.is_visible)
 
             if not unit.is_flying:
                 # 배틀크루저 예외처리.
-                threats = showing_only_enemy_units.filter(
-                    lambda u: ((unit.can_attack_ground and not u.is_flying) or (unit.can_attack_air and u.is_flying))
-                            and ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
-                            u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u)))
-                    )
+                # 배틀은 can_attack_air/ground와 무기 범위가 다 false, 0이다.
+                # threats = showing_only_enemy_units.filter(
+                # lambda u: ((unit.type_id is UnitTypeId.BATTLECRUISER or (unit.can_attack_ground and not u.is_flying) or (unit.can_attack_air and u.is_flying))
+                #         and ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                #         u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u)))
+                # ))
+                threats = showing_only_enemy_units.filter(lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                        u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u))))
                 for eunit in threats:
                     if eunit.type_id is UnitTypeId.BATTLECRUISER:
                         maxrange = max(maxrange, 6)
@@ -361,11 +362,15 @@ class Bot(sc2.BotAI):
                         move_vector *= (eunit.ground_range + 2 - unit.distance_to(eunit)) * 1.5
                         total_move_vector += move_vector
             else:
+                # threats = showing_only_enemy_units.filter(
+                #     lambda u: ((unit.type_id is UnitTypeId.BATTLECRUISER or (
+                #                 unit.can_attack_ground and not u.is_flying) or (unit.can_attack_air and u.is_flying))
+                #                and ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                #                     u.can_attack_air and u.air_range + 2 >= unit.distance_to(u)))
+                #                ))
                 threats = showing_only_enemy_units.filter(
-                    lambda u: ((unit.can_attack_ground and not u.is_flying) or (unit.can_attack_air and u.is_flying))
-                            and ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
-                            u.can_attack_air and u.air_range + 2 >= unit.distance_to(u)))
-                    )
+                    lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                            u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))))
                 for eunit in threats:
                     if eunit.type_id is UnitTypeId.BATTLECRUISER:
                         maxrange = max(maxrange, 6)
@@ -429,6 +434,8 @@ class Bot(sc2.BotAI):
         #
         actions = list()
 
+        print(self.cc.health, " :: ", self.cc.health_max)
+
         # loc = await self.find_placement(building=(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE)), near=self.cc.position)
         # print(loc)
         # actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, loc))
@@ -460,6 +467,14 @@ class Bot(sc2.BotAI):
         if not self.units.not_structure.empty:
             my_groups = self.unit_groups()
 
+        # 수리 중인 MULE이 있는가?
+        self.evoked["is_repairing"] = False
+        for unit in self.units.not_structure:
+            if unit.type_id is UnitTypeId.MULE and unit.is_repairing:
+                self.evoked["is_repairing"] = True
+                break
+
+
         for unit in self.units.not_structure:  # 건물이 아닌 유닛만 선택
             enemy_unit = self.enemy_start_locations[0]
             if self.known_enemy_units.exists:
@@ -471,17 +486,9 @@ class Bot(sc2.BotAI):
             else:
                 target = enemy_unit
 
-            # 이동 준비 전 시즈탱크 풀기
-            if not (
-                    self.army_strategy == self.next_army_strategy) and UnitTypeId.SIEGETANKSIEGED in self.units and not self.evoked.get(
-                    (unit.tag, "offense_mode"), False):
-                if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
-                    actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+            #self.army_strategy = self.next_army_strategy
 
-            else :
-                self.army_strategy = self.next_army_strategy
-
-            if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK) and not self.evoked.get((unit.tag, "offense_mode"),
+            if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK and UnitTypeId.SIEGETANKSIEGED) and not self.evoked.get((unit.tag, "offense_mode"),
                                                                                       False):
                 if unit.type_id is UnitTypeId.HELLION and unit.tag == self.evoked.get(("scout_unit_tag")):
                     pass
@@ -500,13 +507,6 @@ class Bot(sc2.BotAI):
 
             ## 의료선과 밤까마귀 아니면 ...
             if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN):
-
-                # 전투가능한 유닛 수가 15를 넘으면 적 본진으로 공격
-                # actions.append(unit.attack(target))
-                # else:  # ArmyStrategy.DEFENSE
-                # 적 사령부 방향에 유닛 집결
-                # target = self.start_location + 0.25 * (self.enemy_cc.position - self.start_location)
-                # actions.append(unit.attack(target))
 
                 if unit.type_id in (UnitTypeId.MARINE, UnitTypeId.MARAUDER):
                     if (self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"),
@@ -982,100 +982,123 @@ class Bot(sc2.BotAI):
                     # 우선순위 3. 1,2가 해당되지 않는다면 바로 커맨드로 가서 변환 후 때리기
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
                         # 우선순위 1
-                        if not self.known_enemy_units.filter(lambda e: e.is_flying).empty:
+                        # 눈에 보이는(visible) 공중 유닛 대상
+                        first_targets = self.known_enemy_units.filter(lambda e: e.is_flying and e.is_visible)
+                        if not first_targets.empty:
+
+                            self.evoked["Last_enemy_aircraft_time"] = self.time
+
                             def target_func(unit):
-                                target = \
-                                    self.known_enemy_units.filter(lambda e: e.is_flying).sorted(lambda e: e.health)[0]
+                                target = first_targets.sorted(lambda e: e.health)[0]
                                 return target
 
                             actions = self.moving_shot(actions, unit, 15, target_func)
 
                         # 우선순위 2
                         else:
-                            # 우선순위 2로 이행
-                            sidged_targets = self.cached_known_enemy_units.filter(
-                                lambda u: u.type_id is UnitTypeId.SIEGETANKSIEGED)
-                            tank_targets = self.known_enemy_units.filter(lambda u: u.type_id is UnitTypeId.SIEGETANK)
+                            # # 우선순위 2로 이행
+                            # sidged_targets = self.known_enemy_units.filter(
+                            #     lambda u: u.type_id is UnitTypeId.SIEGETANKSIEGED)
+                            # tank_targets = self.known_enemy_units.filter(lambda u: u.type_id is UnitTypeId.SIEGETANK)
+                            #
+                            # if sidged_targets.amount > 0:
+                            #     target = sidged_targets.sorted(lambda e: e.health)[0]
+                            #     actions.append(unit.move(target))
+                            #
+                            #     if unit.distance_to(target) <= 3.0:
+                            #         actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
+                            #
+                            # elif tank_targets.amount > 0:
+                            #     target = tank_targets.sorted(lambda e: e.health)[0]
+                            #     actions.append(unit.move(target))
+                            #
+                            #     if unit.distance_to(target) <= 3.0:
+                            #         actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
 
-                            if sidged_targets.amount > 0:
-                                target = sidged_targets.sorted(lambda e: e.health)[0]
-                                actions.append(unit.move(target))
-
-                                if unit.distance_to(target) <= 5.0:
+                            # 알려진 지상 유닛과 커맨드 중 가장 HP가 없는 걸 때리기
+                            # 적 공중 유닛이 2초 이상 보이지 않는 경우에만 해당
+                            # 유닛 그룹 중앙에서 내려서 싸울 것.
+                            targets = self.known_enemy_units.filter(
+                                lambda u: unit.sight_range > unit.distance_to(u))
+                            # 일정 시간 이상 적 공중 유닛이 보이지 않고 그룹 센터로부터 일정 범위 안에 들어온다면 착륙(3)
+                            if not targets.empty and self.time - self.evoked.get("Last_enemy_aircraft_time", 0.0) >= 2.0\
+                                    and unit.distance_to(my_groups[0].center) < 3.0:
+                                landing_loc = self.evoked.get((unit.tag, "landing_loc"), None)
+                                if landing_loc is None or not await \
+                                        self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc):
+                                    # loc = await self.find_placement(building=AbilityId.MORPH_VIKINGASSAULTMODE, near=my_groups[0].center,
+                                    #                             max_distance=20)
+                                    dist = random.randint(4, 6)
+                                    dist_x = random.randint(3, dist)
+                                    dist_y = math.sqrt(dist ** 2 - dist_x ** 2)\
+                                        if random.randint(0,1) == 0 else -math.sqrt(dist ** 2 - dist_x ** 2)
+                                    desire_add_vector = Point2((-dist_x, dist_y))
+                                    desired_pos = my_groups[0].center + desire_add_vector
+                                    landing_loc = Point2((self.clamp(desired_pos.x, 0, self.map_width),
+                                                          self.clamp(desired_pos.y, 0, self.map_height)))
+                                    self.evoked[(unit.tag, "landing_loc")] = landing_loc
+                                actions.append(unit.move(landing_loc))
+                                if unit.distance_to(landing_loc) < 2.0:
                                     actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
-                                    actions.append(unit.attack(target))
-
-                            elif tank_targets.amount > 0:
-                                target = tank_targets.sorted(lambda e: e.health)[0]
-                                actions.append(unit.move(target))
-
-                                if unit.distance_to(target) <= 5.0:
-                                    actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
-                                    actions.append(unit.attack(target))
                             else:
-                                # 탱크가 없으므로 보이는 지상 유닛이 있다면 가장 HP가 없는 걸 때리기
-                                targets = self.cached_known_enemy_units.filter(
-                                    lambda u: unit.sight_range > unit.distance_to(u))
-                                if not targets.empty:
-                                    target = targets.sorted(lambda e: e.health)[0]
+                                # 타깃이 없을 때 그룹 센터에서 대기하기 위한 코드
+                                actions.append(unit.move(my_groups[0].center))
 
-                                    actions.append(unit.move(target))
-
-                                    if unit.distance_to(target) <= 5.0:
-                                        actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
-                                        actions.append(unit.attack(target))
-
-                                else:
-                                    # 우선순위 3으로 이행
-                                    # 보이는 공중 유닛, 지상 유닛 아무도 없음
-                                    # 커맨드를 때리러 간다.
-                                    actions.append(unit.attack(self.enemy_cc))
 
                 # 바이킹 전투 모드(지상)
-                # 공격 우선순위 : 사정거리 내 탱크 > 지상유닛 > 공중유닛 > 적 커맨드
+                # 공격 우선순위 : 공중유닛 > 사정거리 내 탱크 > 지상유닛 > 적 커맨드
                 if unit.type_id is UnitTypeId.VIKINGASSAULT:
+
+                    enemy_air = self.known_enemy_units.flying
+                    ground_enemy_units = self.cached_known_enemy_units.not_structure.not_flying
+
+                    # 아래 코드는 모드 상관없이 작동
+                    # 적의 지상 유닛이나 커맨드가 보이지 않거나 적 공중유닛이 나타나면 전투기로 변환
+                    # 변환 후 로직은 공중 모드에 적혀 있다.
+                    if not enemy_air.empty or ground_enemy_units.empty:
+                        actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
+
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
-                        # 탱크가 가까이 있으면 공격
-                        enemy_tanks = self.known_enemy_units.filter(
-                            lambda u: u.type_id is (UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
-                        )
+                        # 1. 적 지상유닛 중 가장 가까운 기계부터 공격
+                        # 기계가 없으면 기타 나머지 중 가까운 놈부터
+                        # 2. 적 커맨드
+                        def target_func(unit):
+                            ground_units = self.cached_known_enemy_units.not_flying.filter(
+                                lambda e: e.is_visible)
 
-                        if enemy_tanks.filter(lambda e: unit.distance_to(e) < 6.0).amount > 0:
-                            actions.append(unit.attack(enemy_tanks.sorted(lambda e: e.health)[0]))
-                        # 반대로 탱크가 멀리 있고 사정거리 내에 있다면?
-                        # 탱크의 사정거리 내에 있으면(시즈 모드 거리에) 전투기 변환으로 공격 회피
-                        elif enemy_tanks.filter(lambda e: unit.distance_to(e) < e.ground_range + 2).amount > 0:
-                            actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
-                        else:
-                            def target_func(unit):
-                                ground_units = self.cached_known_enemy_units.not_flying.filter(
-                                    lambda e: e.is_visible)
-
-                                if not ground_units.empty:
+                            if not ground_units.empty:
+                                enemy_machines = self.known_enemy_units.filter(lambda u: u.is_visible and u.is_mechanical)
+                                if enemy_machines.empty:
                                     return ground_units.closest_to(unit)
+                                else:
+                                    return enemy_machines.closest_to(unit)
 
-                                return self.enemy_cc
-                            ground_enemy_units = self.cached_known_enemy_units.not_structure.not_flying
-                            # 2. 지상 유닛
-                            if not ground_enemy_units.empty:
-                                actions = self.moving_shot(actions, unit, 1, target_func, 0.5)
-                            # 3. 공중 유닛 + 커맨드
-                            # 적의 지상 유닛이 없고 보이는 공중 유닛이 있거나 그것도 없다면 전투기로 변환
-                            # 변환 후 로직은 공중 모드에 적혀 있다.
-                            else:
-                                actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
+                            return self.enemy_cc
+
+                        if not ground_enemy_units.empty:
+                            actions = self.moving_shot(actions, unit, 1, target_func, 0.5)
+
+                        else:
+                            actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
 
                 ## REAPER ##
 
                 if unit.type_id is UnitTypeId.REAPER and self.army_strategy is ArmyStrategy.OFFENSE:
-                    if unit.health_percentage <= .3:  # 30퍼 이하면 도망
+                    if unit.health_percentage <= .2:  # 20퍼 이하면 도망
                         actions.append(unit.move(self.start_location))
                         self.evoked[(unit.tag, "REAPER_RUNAWAY")] = True
                     if self.evoked.get((unit.tag, "REAPER_RUNAWAY"), False):
                         if unit.health_percentage >= 0.7:  # 70퍼 이상이면 다시 전투 진입
                             self.evoked[(unit.tag, "REAPER_RUNAWAY")] = False
                     if not self.evoked.get((unit.tag, "REAPER_RUNAWAY"), False):
-                        actions.append(unit.attack(target))
+                        def target_func(unit):
+                            ground_units = self.cached_known_enemy_units.not_flying.filter(
+                                lambda e: e.is_visible)
+                            if not ground_units.empty:
+                                return ground_units.closest_to(unit)
+                            else:
+                                return self.enemy_cc
+                        actions = self.moving_shot(actions, unit, 1, target_func, 0.5)
                         # 가까운 적과 거리 비례로 도망가기
 
                 ## REAPER END

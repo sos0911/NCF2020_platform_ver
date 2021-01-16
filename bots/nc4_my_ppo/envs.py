@@ -317,11 +317,11 @@ class Actor:
                     step_interval = task_dict['step_interval']
                     
                     # pool
-                    # pool은 oppbot, opp2bot + 최대 10개 = max 12개의 봇으로 구성
+                    # pool은 oppbot, opp2bot + 동일 배틀 봇 2개 + 동일 탱크 봇 2개 + pool 4개 = max 10개의 봇으로 구성
                     pool = set(["Opp2Bot", "OppBot", "OppBotBattle", "OppBotBattle", "OppBotTank", "OppBotTank"])
-                    for i in range(1, 5) :
+                    for i in range(1, 5):
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
-                        if os.path.isfile(model_path) :
+                        if os.path.isfile(model_path):
                             pool.add(str(i))
 
                     players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock))
