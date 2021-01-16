@@ -434,8 +434,6 @@ class Bot(sc2.BotAI):
         #
         actions = list()
 
-        print(self.cc.health, " :: ", self.cc.health_max)
-
         # loc = await self.find_placement(building=(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE)), near=self.cc.position)
         # print(loc)
         # actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, loc))
