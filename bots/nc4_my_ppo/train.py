@@ -404,7 +404,7 @@ class Trainer:
             best_model_path = Path(__file__).parent / ('model_best.pt')
             torch.save(self.model.state_dict(), best_model_path)
             self.saved_model_score = np.mean(self.scores)
-        elif np.mean(self.scores) > 0.8:
+        elif np.mean(self.scores) > 0.9:
             cur_model_path = Path(__file__).parent / ('model.pt')
             torch.save(self.model.state_dict(), cur_model_path)
             pool_model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')

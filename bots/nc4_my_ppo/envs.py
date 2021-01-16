@@ -317,6 +317,7 @@ class Actor:
                     step_interval = task_dict['step_interval']
                     
                     # pool
+                    # set으로 중복 방지
                     # pool은 oppbot, opp2bot + 동일 배틀 봇 2개 + 동일 탱크 봇 2개 + pool 4개 = max 10개의 봇으로 구성
                     pool = set(["Opp2Bot", "OppBot", "OppBotBattle", "OppBotBattle", "OppBotTank", "OppBotTank"])
                     for i in range(1, 5):

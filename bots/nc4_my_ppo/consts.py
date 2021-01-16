@@ -54,7 +54,6 @@ class MessageType(Enum):
     RESULT = 0
     EXCEPTION = 1
 
-
 # wonseok add #
 N_FEATURES = 5 + 13
 # wonseok end #

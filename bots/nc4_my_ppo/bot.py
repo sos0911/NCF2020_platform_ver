@@ -86,7 +86,7 @@ class Bot(sc2.BotAI):
             try:
                 self.model = Model()
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
-                self.model.load_state_dict(torch.load(model_path)) # gpu
+                self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cuda'))) # gpu
                 #self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'))) # cpu
             except Exception as exc:
                 import traceback;
@@ -167,7 +167,7 @@ class Bot(sc2.BotAI):
         self.cached_known_enemy_structures = self.known_enemy_structures()
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first # 왠지는 모르겠는데 이걸 추가해야 실시간 tracking이 된다..
 
-        #actions += await self.train_action()
+        actions += await self.train_action()
         actions += await self.unit_actions()
 
         # 공격 모드가 아닌 기타 모드일때
