@@ -51,18 +51,21 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         # wonseok add #
-        self.fc1 = nn.Linear(5 + len(EconomyStrategy) * 2 + 1, 64)
+        self.fc1 = nn.Linear(5 + len(EconomyStrategy) * 2 + 1, 128)
         # wonseok end #
-        self.norm1 = nn.LayerNorm(64)
-        self.fc2 = nn.Linear(64, 64)
-        self.norm2 = nn.LayerNorm(64)
-        self.vf = nn.Linear(64, 1)
-        self.economy_head = nn.Linear(64, len(EconomyStrategy))
-        self.army_head = nn.Linear(64, len(ArmyStrategy))
+        self.norm1 = nn.LayerNorm(128)
+        self.fc2 = nn.Linear(128, 128)
+        self.norm2 = nn.LayerNorm(128)
+        self.fc3 = nn.Linear(128, 128)
+        self.norm3 = nn.LayerNorm(128)
+        self.vf = nn.Linear(128, 1)
+        self.economy_head = nn.Linear(128, len(EconomyStrategy))
+        self.army_head = nn.Linear(128, len(ArmyStrategy))
 
     def forward(self, x):
         x = F.relu(self.norm1(self.fc1(x)))
         x = F.relu(self.norm2(self.fc2(x)))
+        x = F.relu(self.norm3(self.fc3(x)))
         value = self.vf(x)
         economy_logp = torch.log_softmax(self.economy_head(x), -1)
         army_logp = torch.log_softmax(self.army_head(x), -1)
@@ -1244,18 +1247,21 @@ class Bot(sc2.BotAI):
             # 공성전차를 위주로 잡게 한다.
             # 기본적으로 공성전차를 찾아다니되 들키면 튄다 ㅎㅎ
             if unit.type_id is UnitTypeId.BANSHEE:
+
                 # 아래 내용은 공격 정책이거나 offense mode가 아닐 시에도 항시 적용됨
                 threats = self.select_threat(unit)
+                clock_threats = self.cached_known_enemy_units.filter(
+                    lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
 
                 # 근처에 위협이 존재할 시 클라킹
-                if (not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3) and not threats.empty:
+                if (clock_threats.empty and not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3) and not threats.empty:
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
                 if not threats.empty:
                     self.evoked[(unit.tag, "BANSHEE_CLOAK")] = self.time
 
-                if threats.empty and (
+                if clock_threats.empty and threats.empty and (
                         self.time - self.evoked.get((unit.tag, "BANSHEE_CLOAK"), 0.0) >= 10) and unit.has_buff(
                     BuffId.BANSHEECLOAK):
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
@@ -1284,8 +1290,6 @@ class Bot(sc2.BotAI):
                     # 그 상태가 아니라면 무빙샷.
                     # TODO : 은신이 감지되고 있는지 확인이 불가함. CloakState 작동 불가
                     # 불가피하게 밤까마귀의 시야 범위 안에 있는지 확인하는 것으로 대체
-                    clock_threats = self.cached_known_enemy_units.filter(
-                        lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
 
                     # 공격 모드 전환
                     if unit.is_idle and unit.energy_percentage >= 0.3:
@@ -1293,7 +1297,7 @@ class Bot(sc2.BotAI):
 
                     # 이미 교전 중일때 전략 결정
                     if not unit.is_idle:
-                        if unit.has_buff(BuffId.BANSHEECLOAK) and clock_threats.empty:
+                        if clock_threats.empty and unit.has_buff(BuffId.BANSHEECLOAK):
                             actions.append(unit.attack(target_func(unit)))
                         else:
                             actions = self.moving_shot(actions, unit, 5, target_func)
