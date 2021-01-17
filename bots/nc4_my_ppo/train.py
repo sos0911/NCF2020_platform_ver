@@ -140,8 +140,8 @@ class Trainer:
         
         # model load
         model_path = Path(__file__).parent / 'model.pt'
-        checkpoint = torch.load(model_path, map_location=torch.device('cuda')) # gpu
-        #checkpoint = torch.load(model_path, map_location=torch.device('cpu')) # cpu
+        #checkpoint = torch.load(model_path, map_location=torch.device('cuda')) # gpu
+        checkpoint = torch.load(model_path, map_location=torch.device('cpu')) # cpu
         self.model.load_state_dict(checkpoint)
         # model load end
         

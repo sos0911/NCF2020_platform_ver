@@ -86,8 +86,8 @@ class Bot(sc2.BotAI):
             try:
                 self.model = Model()
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
-                self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cuda'))) # gpu
-                #self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'))) # cpu
+                #self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cuda'))) # gpu
+                self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'))) # cpu
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()
