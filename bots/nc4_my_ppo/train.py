@@ -131,19 +131,25 @@ class Trajectory:
 
 class Trainer:
     def __init__(self, args):
+
         self.tasks = [self.train_step]
-        
         self.args = args
         self.device = args.device
         self.model = Model().to(self.device)
+        # parameter for model save
+        # 현재 score가 일정 수치를 넘어 model save가 되면 False로 바뀐다.
+        # 다시 score가 일정 수치 이하로 내려가면 True로 바뀐다.
+        self.possible_model_save = True
 
         
-        # model load
+        # 만약 model.pt가 있다면, model load
+        # 이전에 학습된 모델이라고 가정한다.
         model_path = Path(__file__).parent / 'model.pt'
-        #checkpoint = torch.load(model_path, map_location=torch.device('cuda')) # gpu
-        checkpoint = torch.load(model_path, map_location=torch.device('cpu')) # cpu
-        self.model.load_state_dict(checkpoint)
-        # model load end
+        if os.path.isfile(model_path):
+            # checkpoint = torch.load(model_path, map_location=torch.device('cuda')) # gpu
+            checkpoint = torch.load(model_path, map_location=torch.device('cpu')) # cpu
+            self.model.load_state_dict(checkpoint)
+            # model load end
         
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.lr, amsgrad=True)
@@ -393,10 +399,9 @@ class Trainer:
         # 좀 더 탐색하기 위함
         # 그와는 별개로 역대 최고 모델 model_best.pt를 저장해 둠.
 
-        # ## donghyun edited for test ##
-        # cur_model_path = Path(__file__).parent / ('model.pt')
-        # torch.save(self.model.state_dict(), cur_model_path)
-        # ## donghyun ended ##
+        # model save 가능 여부 조절
+        if np.mean(self.scores) <= 0.9 and not self.possible_model_save:
+            self.possible_model_save = True
 
         if np.mean(self.scores) > self.saved_model_score:
             cur_model_path = Path(__file__).parent / ('model.pt')
@@ -407,9 +412,13 @@ class Trainer:
         elif np.mean(self.scores) > 0.9:
             cur_model_path = Path(__file__).parent / ('model.pt')
             torch.save(self.model.state_dict(), cur_model_path)
-            pool_model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
-            torch.save(self.model.state_dict(), pool_model_path)
-            self.mybot_version = (self.mybot_version % 4) + 1
+            # model save가 가능하다면 save 후 False 전환
+            # 한번에 하나씩만 model 풀이 갱신되게 하기 위함이다.
+            if self.possible_model_save:
+                pool_model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
+                torch.save(self.model.state_dict(), pool_model_path)
+                self.mybot_version = (self.mybot_version % 4) + 1
+                self.possible_model_save = False
 
     def stop(self):
         self.running = False
