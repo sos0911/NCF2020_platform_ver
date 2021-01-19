@@ -167,6 +167,14 @@ class Bot(sc2.BotAI):
             del self.build_order[0]  # 빌드오더에서 첫 번째 유닛 제거
             self.evoked[(self.cc.tag, 'train')] = self.time
 
+        closest_dist = 500
+
+        if not self.known_enemy_units.empty:
+            for our_unit in self.units:
+                temp = self.known_enemy_units.closest_distance_to(our_unit)
+                if temp < closest_dist:
+                    closest_dist = temp
+
         for unit in self.units.not_structure :
 
             enemy_units = self.known_enemy_units.filter(lambda u: u.is_visible)
@@ -176,7 +184,8 @@ class Bot(sc2.BotAI):
                 target = self.enemy_cc
 
             if not unit.type_id in [UnitTypeId.RAVEN, UnitTypeId.MULE, UnitTypeId.SIEGETANK, UnitTypeId.SIEGETANKSIEGED]:
-                if self.attacking == False and self.known_enemy_units.filter(lambda u: u.is_visible).empty:
+
+                if self.attacking == False and closest_dist > 7.0:
                     actions.append(unit.attack(self.rally_point))
                 else:
                     actions.append(unit.attack(target))
@@ -204,7 +213,7 @@ class Bot(sc2.BotAI):
                         dist_x = random.randint(2, dist)
                         dist_y = math.sqrt(dist ** 2 - dist_x ** 2) if random.randint(0, 1) == 0 else -math.sqrt(
                             dist ** 2 - dist_x ** 2)
-                        desire_add_vector = Point2((dist_x, dist_y))
+                        desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
                         desired_pos = my_groups[0].center + desire_add_vector
                         desired_pos = Point2((self.clamp(desired_pos.x, 0, self.map_width),
                                                 self.clamp(desired_pos.y, 0, self.map_height)))
@@ -212,7 +221,7 @@ class Bot(sc2.BotAI):
                         self.evoked[(unit.tag, "desire_add_vector")] = desire_add_vector
                     else:
                         if my_groups[0].center.distance_to(
-                                self.evoked.get((unit.tag, "group_center"), self.cc.position)) > 4:
+                                self.evoked.get((unit.tag, "group_center"), self.cc.position)) > 7:
                             self.evoked[(unit.tag, "group_center")] = my_groups[0].center
                         desired_pos = self.evoked.get((unit.tag, "group_center"), self.cc.position) + self.evoked.get(
                             (unit.tag, "desire_add_vector"), None)
@@ -261,9 +270,13 @@ class Bot(sc2.BotAI):
                     # 나와있는 ground_range에 0.7쯤 더해야 실제 사정거리가 된다..
                     # 넉넉잡아 2로..
                     threats = self.select_threat(unit)
-                    # 한 유닛이라도 자신을 때릴 수 있으면 바로 시즈모드 해제
-                    if threats.amount > 0:
-                        actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+                    # # 한 유닛이라도 자신을 때릴 수 있으면 바로 시즈모드 해제
+                    # if threats.amount > 0:
+                    #     actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+                    for eunit in threats:
+                        if unit.distance_to(eunit) < 3.5:
+                            actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+                            break
 
                 # 어느 때라도 상관없이 그룹 센터가 일정 거리 이상(10)달라지면 시즈모드 풀기(이동 준비)
                 if my_groups:

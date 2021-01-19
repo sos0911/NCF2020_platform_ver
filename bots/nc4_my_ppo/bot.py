@@ -88,7 +88,6 @@ class Bot(sc2.BotAI):
         if sock is None:
             try:
                 self.model = Model()
-                version = "1"
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
                 #self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cuda'))) # gpu
                 self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'))) # cpu
@@ -546,10 +545,6 @@ class Bot(sc2.BotAI):
                 if unit.type_id is UnitTypeId.MARINE:
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
                         def target_func(unit):
-
-                            if self.first_enemy_Raven is not None:
-                                return self.first_enemy_Raven
-
                             enemies = self.known_enemy_units.filter(lambda e: e.is_visible)
                             if not enemies.empty:
                                 # 보이는 적이 하나라도 있다면, 그 중에 HP가 가장 적은 애 집중타격
@@ -567,9 +562,6 @@ class Bot(sc2.BotAI):
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
 
                         def target_func(unit):
-
-                            if self.first_enemy_Raven is not None:
-                                return self.first_enemy_Raven
 
                             # 커맨드 스냅샷 포함
                             # 만약 위협이 근처에 존재한다면 위협 제거
@@ -688,8 +680,6 @@ class Bot(sc2.BotAI):
                                                                                      False):  # 재블린 미사일 모드
                         def target_func(unit):
 
-                            if self.first_enemy_Raven is not None:
-                                return self.first_enemy_Raven
 
                             target = None
                             flying_enemies = self.known_enemy_units.filter(lambda unit: unit.is_flying)  # 공중 유닛
@@ -782,7 +772,7 @@ class Bot(sc2.BotAI):
                             dist_x = random.randint(2, dist)
                             dist_y = math.sqrt(dist ** 2 - dist_x ** 2) if random.randint(0, 1) == 0 else -math.sqrt(
                                 dist ** 2 - dist_x ** 2)
-                            desire_add_vector = Point2((-dist_x, dist_y))
+                            desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
                             desired_pos = self.my_groups[0].center + desire_add_vector
                             desired_pos = Point2((self.clamp(desired_pos.x, 0, self.map_width),
                                                   self.clamp(desired_pos.y, 0, self.map_height)))
@@ -790,7 +780,7 @@ class Bot(sc2.BotAI):
                             self.evoked[(unit.tag, "desire_add_vector")] = desire_add_vector
                         else:
                             if self.my_groups[0].center.distance_to(
-                                    self.evoked.get((unit.tag, "group_center"), self.cc.position)) > 4:
+                                    self.evoked.get((unit.tag, "group_center"), self.cc.position)) > 7:
                                 self.evoked[(unit.tag, "group_center")] = self.my_groups[0].center
                             desired_pos = self.evoked.get((unit.tag, "group_center"), self.cc.position) + self.evoked.get(
                                 (unit.tag, "desire_add_vector"), None)
@@ -825,15 +815,15 @@ class Bot(sc2.BotAI):
                     else:
                         actions = self.moving_shot(actions, unit, 3, target_func)
 
-
                 # 시즈모드 시탱
                 # 시즈모드일 때에도 공격, 방어모드 상관없이 작동한다.
                 if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
-                    if self.cached_known_enemy_units.not_structure.exists:
+                    if self.known_enemy_units.not_structure.exists:
                         # 타겟팅 정하기
                         target = None
                         # HP 적은 애를 타격하지만, 중장갑 위주
-                        targets = self.cached_known_enemy_units.not_structure.filter(lambda u: not u.is_flying and unit.distance_to(u) <= unit.ground_range)
+                        targets = self.known_enemy_units.not_structure.filter(
+                            lambda u: not u.is_flying and unit.distance_to(u) <= unit.ground_range)
                         armored_targets = targets.filter(lambda u: u.is_armored)
                         light_targets = targets - armored_targets
                         if not armored_targets.empty:
@@ -848,9 +838,13 @@ class Bot(sc2.BotAI):
                         # 나와있는 ground_range에 0.7쯤 더해야 실제 사정거리가 된다..
                         # 넉넉잡아 2로..
                         threats = self.select_threat(unit)
-                        # 한 유닛이라도 자신을 때릴 수 있으면 바로 시즈모드 해제
-                        if threats.amount > 0:
-                            actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+                        # # 한 유닛이라도 자신을 때릴 수 있으면 바로 시즈모드 해제
+                        # if threats.amount > 0:
+                        #     actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+                        for eunit in threats:
+                            if unit.distance_to(eunit) < 3.5:
+                                actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+                                break
 
                     # 어느 때라도 상관없이 그룹 센터가 일정 거리 이상(10)달라지면 시즈모드 풀기(이동 준비)
                     if self.my_groups:
@@ -980,8 +974,6 @@ class Bot(sc2.BotAI):
                             self.evoked["Last_enemy_aircraft_time"] = self.time
 
                             def target_func(unit):
-                                if self.first_enemy_Raven is not None:
-                                    return self.first_enemy_Raven
 
                                 target = first_targets.sorted(lambda e: e.health)[0]
                                 return target
@@ -1193,8 +1185,6 @@ class Bot(sc2.BotAI):
                     else:  # 핵 없으면 생체유닛한테 저격하기 / 공격 OK
                         def target_func(unit):
 
-                            if self.first_enemy_Raven is not None:
-                                return self.first_enemy_Raven
 
                             enemies = self.known_enemy_units
                             light_enemies = enemies.filter(lambda e: e.is_light)

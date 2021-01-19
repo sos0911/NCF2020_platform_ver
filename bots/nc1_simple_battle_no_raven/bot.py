@@ -111,6 +111,14 @@ class Bot(sc2.BotAI):
             # MULE 소환
             actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
 
+        closest_dist = 500
+
+        if not self.known_enemy_units.empty:
+            for our_unit in self.units:
+                temp = self.known_enemy_units.closest_distance_to(our_unit)
+                if temp < closest_dist:
+                    closest_dist = temp
+
         for unit in self.units.not_structure:
 
             enemy_units = self.known_enemy_units.filter(lambda u: u.is_visible)
@@ -120,7 +128,7 @@ class Bot(sc2.BotAI):
                 target = self.enemy_cc
 
             if not unit.type_id in [UnitTypeId.RAVEN, UnitTypeId.MULE]:
-                if self.attacking == False and self.known_enemy_units.filter(lambda u: u.is_visible).empty:
+                if self.attacking == False and closest_dist > 7.0:
                     actions.append(unit.attack(self.rally_point))
                 else:
                     actions.append(unit.attack(target))
