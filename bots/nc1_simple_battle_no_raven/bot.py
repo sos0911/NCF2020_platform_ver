@@ -28,12 +28,37 @@ class Bot(sc2.BotAI):
         """
         self.build_order = list()
         self.evoked = dict()
-        self.my_raven = False
         self.maybe_battle = False
 
-        self.train_raven = False
         self.attacking = False
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first
+
+        # (32.5, 31.5) or (95.5, 31.5)
+        if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0:
+            self.enemy_cc = Point2(Point2((95.5, 31.5)))  # 적 시작 위치
+            self.rally_point = Point2(Point2((47.5, 31.5)))
+        else:
+            self.enemy_cc = Point2(Point2((32.5, 31.5)))  # 적 시작 위치
+            self.rally_point = Point2(Point2((80.5, 31.5)))
+
+    def select_threat(self, unit):
+        # 자신에게 위협이 될 만한 상대 유닛들을 리턴
+        # 자신이 배틀크루저일때 예외처리 필요.. 정보가 제대로 나오나?
+        threats = []
+        if unit.is_flying or unit.type_id is UnitTypeId.BATTLECRUISER:
+            threats = self.known_enemy_units.filter(
+                lambda u: u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))
+            for eunit in self.known_enemy_units:
+                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(eunit):
+                    threats.append(eunit)
+        else:
+            threats = self.known_enemy_units.filter(
+                lambda u: u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u))
+            for eunit in self.known_enemy_units:
+                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(eunit):
+                    threats.append(eunit)
+
+        return threats
 
     async def on_step(self, iteration: int):       
         actions = list()
@@ -57,17 +82,15 @@ class Bot(sc2.BotAI):
                 self.attacking = False
         else :
             self.attacking = False
-        
-        for enemy in self.known_enemy_units :
-            if enemy.type_id is UnitTypeId.BANSHEE :
-                self.train_raven = True
+
 
         if self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0:
-            if self.vespene > 200 and not UnitTypeId.BATTLECRUISER in self.build_order and not UnitTypeId.RAVEN in self.build_order:
+            if self.vespene > 200 and not UnitTypeId.BATTLECRUISER in self.build_order:
                 self.build_order.append(UnitTypeId.BATTLECRUISER)
             elif self.vespene <= 200 and not self.build_order:
                 self.build_order.insert(0, UnitTypeId.MARINE)
 
+        self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 왠지는 모르겠는데 이걸 추가해야 실시간 tracking이 된다..
 
         #
         # 사령부 명령 생성
@@ -78,21 +101,28 @@ class Bot(sc2.BotAI):
             del self.build_order[0]  # 빌드오더에서 첫 번째 유닛 제거
             self.evoked[(self.cc.tag, 'train')] = self.time
 
-        for unit in self.units.not_structure :
-            enemy_unit = Point2((32.5, 31.5))
-            if self.known_enemy_units.exists:
-                enemy_unit = self.known_enemy_units.closest_to(unit)  # 가장 가까운 적 유닛
-
-            # 적 사령부와 가장 가까운 적 유닛중 더 가까운 것을 목표로 설정
-            if unit.distance_to(Point2((32.5, 31.5))) < unit.distance_to(enemy_unit):
-                target = Point2((32.5, 31.5))
+        # 지게로봇 소환
+        if self.cc.health_percentage < 0.5 and await self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE,
+                                                                   only_check_energy_and_cooldown=True):
+            if self.cc.position.x < 50:
+                mule_summon_point = Point2((self.cc.position.x - 5, self.cc.position.y))
             else:
-                target = enemy_unit
+                mule_summon_point = Point2((self.cc.position.x + 5, self.cc.position.y))
+            # MULE 소환
+            actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
 
-            if unit.type_id is not UnitTypeId.RAVEN :
-                if self.attacking == False :
-                    actions.append(unit.attack(Point2((80.0, 31.5))))
-                elif self.attacking == True :
+        for unit in self.units.not_structure:
+
+            enemy_units = self.known_enemy_units.filter(lambda u: u.is_visible)
+            if enemy_units.exists:
+                target = enemy_units.closest_to(unit)  # 가장 가까운 적 유닛
+            else:
+                target = self.enemy_cc
+
+            if not unit.type_id in [UnitTypeId.RAVEN, UnitTypeId.MULE]:
+                if self.attacking == False and self.known_enemy_units.filter(lambda u: u.is_visible).empty:
+                    actions.append(unit.attack(self.rally_point))
+                else:
                     actions.append(unit.attack(target))
 
             if unit.type_id is UnitTypeId.MARINE :
@@ -152,43 +182,22 @@ class Bot(sc2.BotAI):
 
                 ## BATTLECRUISER END ##
 
-            # RAVEN
-            if unit.type_id is UnitTypeId.RAVEN:
-                if self.attacking == True : # 공격중
-                    if unit.distance_to(
-                            target) < 15 and unit.energy > 75 :  # 적들이 근처에 있고 마나도 있으면
-                        known_only_enemy_units = self.known_enemy_units.not_structure
-                        if known_only_enemy_units.exists:  # 보이는 적이 있다면
-                            enemy_amount = known_only_enemy_units.amount
-                            not_antiarmor_enemy = known_only_enemy_units.filter(
-                                # anitarmor가 아니면서 가능대상에서 1초가 지났을 때...
-                                lambda unit: self.time - self.evoked.get((unit.tag, "ANTIARMOR_POSSIBLE"), 0) >= 1.0
-                                # (not unit.has_buff(BuffId.RAVENSHREDDERMISSILEARMORREDUCTION)) and
-                            )
-                            not_antiarmor_enemy_amount = not_antiarmor_enemy.amount
+            # 지게로봇
+            # 에너지 50을 사용하여 소환
+            # 일정 시간 뒤에 파괴된다.
+            # 용도 : 사령부 수리 or 메카닉 유닛 수리
 
-                            if not_antiarmor_enemy_amount / enemy_amount > 0.5:  # 안티아머 걸리지 않은게 절반 이상이면 미사일 쏘기 center에
-                                enemy_center = not_antiarmor_enemy.center
-                                select_unit = not_antiarmor_enemy.closest_to(enemy_center)
-                                possible_units = known_only_enemy_units.closer_than(3, select_unit)  # 안티아머 걸릴 수 있는 애들
-
-                                for punit in possible_units:
-                                    self.evoked[(punit.tag, "ANTIARMOR_POSSIBLE")] = self.time
-                                self.evoked[(punit.tag, "ANTIARMOR_POSSIBLE")] = self.time
-
-                                actions.append(unit(AbilityId.EFFECT_ANTIARMORMISSILE, select_unit))
-
-                            else:  # 안티아머가 있으면 매트릭스 걸 놈 추적
-                                for enemy in known_only_enemy_units:
-                                    if enemy.is_mechanical and enemy.has_buff(
-                                            BuffId.RAVENSCRAMBLERMISSILE):  # 기계이고 락다운 안걸려있으면 (robotic은 로봇)
-                                        actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
-                        # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
-                    else:  # 적들이 없으면
-                        if self.units.not_structure.exists:  # 전투그룹 중앙 조금 뒤 대기
-                            actions.append(unit.move(Point2((self.units.center.x, self.units.center.y - 5))))
-                else : # 방어모드
-                    actions.append(unit.move(self.cc))
+            if unit.type_id is UnitTypeId.MULE:
+                if self.cc.health < self.cc.health_max:
+                    # 커맨드 수리
+                    actions.append(unit(AbilityId.EFFECT_REPAIR_MULE, self.cc))
+                else:
+                    # 할게 없는 상태.
+                    # 평소 대기 시에는 우리 커맨드보다 조금 안쪽에서 대기
+                    if self.cc.position.x < 50:
+                        actions.append(unit.move(Point2((self.cc.position.x - 5, self.cc.position.y))))
+                    else:
+                        actions.append(unit.move(Point2((self.cc.position.x + 5, self.cc.position.y))))
 
         await self.do_actions(actions)
 

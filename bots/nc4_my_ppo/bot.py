@@ -88,6 +88,7 @@ class Bot(sc2.BotAI):
         if sock is None:
             try:
                 self.model = Model()
+                version = "1"
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
                 #self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cuda'))) # gpu
                 self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'))) # cpu
@@ -95,6 +96,7 @@ class Bot(sc2.BotAI):
                 import traceback;
                 traceback.print_exc()
         ## donghyun end ##
+
 
     def on_start(self):
         """
@@ -139,6 +141,11 @@ class Bot(sc2.BotAI):
         self.left_up = Point2((12.5, 51.5))
         self.right_up = Point2((110.5, 51.5))
 
+        # 밤까마귀 cache
+        self.first_enemy_Raven = None
+        # 아군 로봇에게 수리받는 중인 애들 list cache
+        self.being_repaired_units_list = []
+
         # Learner에 join
         self.game_id = f"{self.host_name}_{time.time()}"
         # data = (JOIN, game_id)
@@ -170,9 +177,6 @@ class Bot(sc2.BotAI):
         self.cached_known_enemy_structures = self.known_enemy_structures()
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first # 왠지는 모르겠는데 이걸 추가해야 실시간 tracking이 된다..
 
-        actions += await self.train_action()
-        actions += await self.unit_actions()
-
         # 공격 모드가 아닌 기타 모드일때
         # offense_mode가 될지 말지 정함
         # 하나라도 트리거가 된다면 모두 트리거가 된다.
@@ -183,13 +187,61 @@ class Bot(sc2.BotAI):
                 # 모든 유닛이 트리거 작동
                 # 정찰 중인 벌쳐만 빼고..
                 for unit in self.units.not_structure:
-                    if self.evoked.get(("scout_unit_tag"), None) is not None and unit.tag == self.evoked.get(("scout_unit_tag")):
+                    if self.evoked.get(("scout_unit_tag"), None) is not None and unit.tag == self.evoked.get(
+                            ("scout_unit_tag")):
                         self.evoked[(unit.tag, "offense_mode")] = False
                         continue
                     self.evoked[(unit.tag, "offense_mode")] = True
                 break
-            else :
+            else:
                 self.offense_mode = False
+
+        # 공중 공격 가능 유닛 우선순위 1순위 target!
+        # 만약 아군 밴시가 detected되었다면
+        # 가장 가까운 밤까마귀 cache
+        self.first_enemy_Raven = None
+        for our_unit in self.units:
+            if our_unit.type_id is UnitTypeId.BANSHEE and our_unit.is_revealed:
+                enemy_ravens = self.known_enemy_units.filter(lambda u: u.type_id is UnitTypeId.RAVEN)
+                if not enemy_ravens.empty:
+                    self.first_enemy_Raven = enemy_ravens.sorted(lambda u: our_unit.distance_to(u))[0]
+                    break
+
+        # 정찰할 화염차 선택
+        if self.units(UnitTypeId.HELLION).exists:
+            scout_unit_tag = self.evoked.get(("scout_unit_tag"), -1)
+            if scout_unit_tag == -1:
+                self.evoked[("scout_unit_tag")] = self.units(UnitTypeId.HELLION).first.tag
+                self.evoked[(self.units(UnitTypeId.HELLION).first.tag, "offense_mode")] = False
+                scout_unit_tag = self.evoked.get(("scout_unit_tag"))
+            else:
+                scout_exist = False
+                for unit in self.units(UnitTypeId.HELLION):
+                    if scout_unit_tag == unit.tag:
+                        scout_exist = True
+                        break
+                if not scout_exist:
+                    self.evoked[("scout_unit_tag")] = self.units(UnitTypeId.HELLION).first.tag
+                    self.evoked[(self.units(UnitTypeId.HELLION).first.tag, "offense_mode")] = False
+                    scout_unit_tag = self.evoked.get(("scout_unit_tag"))
+
+        # 상대 목록 갱신
+        for unit in self.known_enemy_units.not_structure:
+            if self.enemy_exists.get(unit.tag, None) is None:
+                self.enemy_exists[unit.tag] = unit.type_id
+
+        # 아군 그룹 정보 갱신
+        if not self.units.not_structure.empty:
+            my_groups = self.unit_groups()
+
+        # 아군 수리받는 메카닉 유닛들 cache
+        self.being_repaired_units_list = []
+        for unit in self.units.not_structure:
+            if unit.type_id is UnitTypeId.MULE and unit.is_repairing and self.evoked.get((unit.tag, "being_repaired_unit"), None) is not None:
+                self.being_repaired_units_list.append(self.evoked.get((unit.tag, "being_repaired_unit")))
+
+        actions += await self.train_action()
+        actions += await self.unit_actions()
 
         await self.do_actions(actions)
 
@@ -275,10 +327,12 @@ class Bot(sc2.BotAI):
                 self.evoked[(self.cc.tag, 'train')] = self.time
         # 지게로봇
         elif next_unit == EconomyStrategy.MULE.value:
-            if await self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE) and self.time - self.evoked.get(
-                    (self.cc.tag, 'train'), 0) > 1.0:
-                mule_summon_point = await self.find_placement(UnitTypeId.COMMANDCENTER, self.cc.position)
-                # MULE 소환
+            if await self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE, only_check_energy_and_cooldown=True):
+                if self.cc.position.x < 50:
+                    mule_summon_point = Point2((self.cc.position.x - 5, self.cc.position.y))
+                else:
+                    mule_summon_point = Point2((self.cc.position.x + 5, self.cc.position.y))
+                    # 정해진 곳에 MULE 소환
                 actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
         # 나머지
         elif self.can_afford(next_unit):
@@ -294,8 +348,9 @@ class Bot(sc2.BotAI):
 
     def select_threat(self, unit: Unit):
         # 자신에게 위협이 될 만한 상대 유닛들을 리턴
-        threats = None
-        if unit.is_flying:
+        # 자신이 배틀크루저일때 예외처리 필요.. 정보가 제대로 나오나?
+        threats = []
+        if unit.is_flying or unit.type_id is UnitTypeId.BATTLECRUISER:
             threats = self.known_enemy_units.filter(
                 lambda u: u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))
             for eunit in self.known_enemy_units:
@@ -341,60 +396,51 @@ class Bot(sc2.BotAI):
             total_move_vector = Point2((0, 0))
             showing_only_enemy_units = self.known_enemy_units.not_structure.filter(lambda e: e.is_visible)
 
-            if not unit.is_flying:
-                # 배틀크루저 예외처리.
-                # 배틀은 can_attack_air/ground와 무기 범위가 다 false, 0이다.
-                # threats = showing_only_enemy_units.filter(
-                # lambda u: ((unit.type_id is UnitTypeId.BATTLECRUISER or (unit.can_attack_ground and not u.is_flying) or (unit.can_attack_air and u.is_flying))
-                #         and ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
-                #         u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u)))
-                # ))
-                threats = showing_only_enemy_units.filter(lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
-                        u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u))))
-                for eunit in threats:
-                    if eunit.type_id is UnitTypeId.BATTLECRUISER:
-                        maxrange = max(maxrange, 6)
-                        move_vector = unit.position - eunit.position
-                        move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                        move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
-                        total_move_vector += move_vector
-                    else:
-                        maxrange = max(maxrange, eunit.ground_range)
-                        move_vector = unit.position - eunit.position
-                        move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                        move_vector *= (eunit.ground_range + 2 - unit.distance_to(eunit)) * 1.5
-                        total_move_vector += move_vector
-            else:
-                # threats = showing_only_enemy_units.filter(
-                #     lambda u: ((unit.type_id is UnitTypeId.BATTLECRUISER or (
-                #                 unit.can_attack_ground and not u.is_flying) or (unit.can_attack_air and u.is_flying))
-                #                and ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
-                #                     u.can_attack_air and u.air_range + 2 >= unit.distance_to(u)))
-                #                ))
-                threats = showing_only_enemy_units.filter(
-                    lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
-                            u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))))
-                for eunit in threats:
-                    if eunit.type_id is UnitTypeId.BATTLECRUISER:
-                        maxrange = max(maxrange, 6)
-                        move_vector = unit.position - eunit.position
-                        move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                        move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
-                        total_move_vector += move_vector
-                    else:
-                        maxrange = max(maxrange, eunit.air_range)
-                        move_vector = unit.position - eunit.position
-                        move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                        move_vector *= (eunit.air_range + 2 - unit.distance_to(eunit)) * 1.5
-                        total_move_vector += move_vector
+            # 자신이 클라킹 상태가 아닐 때나 클라킹 상태이지만 발각됬을 때
+            if not unit.is_cloaked or unit.is_revealed:
+                if not unit.is_flying:
+                    # 배틀크루저 예외처리.
+                    # 배틀은 can_attack_air/ground와 무기 범위가 다 false, 0이다.
+                    threats = showing_only_enemy_units.filter(lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                            u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u))))
+                    for eunit in threats:
+                        if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                            maxrange = max(maxrange, 6)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        else:
+                            maxrange = max(maxrange, eunit.ground_range)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.ground_range + 2 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                else:
+                    threats = showing_only_enemy_units.filter(
+                        lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                                u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))))
+                    for eunit in threats:
+                        if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                            maxrange = max(maxrange, 6)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        else:
+                            maxrange = max(maxrange, eunit.air_range)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.air_range + 2 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
 
-            if not threats.empty:
-                total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
-                total_move_vector *= maxrange
-                # 이동!
-                dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
-                               self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
-                actions.append(unit.move(dest))
+                if not threats.empty:
+                    total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                    total_move_vector *= maxrange
+                    # 이동!
+                    dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                   self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                    actions.append(unit.move(dest))
 
         return actions
 
@@ -441,42 +487,13 @@ class Bot(sc2.BotAI):
         # print(loc)
         # actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, loc))
 
-        # 정찰할 화염차 선택
-        if self.units(UnitTypeId.HELLION).exists:
-            scout_unit_tag = self.evoked.get(("scout_unit_tag"), -1)
-            if scout_unit_tag == -1:
-                self.evoked[("scout_unit_tag")] = self.units(UnitTypeId.HELLION).first.tag
-                self.evoked[(self.units(UnitTypeId.HELLION).first.tag, "offense_mode")] = False
-                scout_unit_tag = self.evoked.get(("scout_unit_tag"))
-            else:
-                scout_exist = False
-                for unit in self.units(UnitTypeId.HELLION):
-                    if scout_unit_tag == unit.tag:
-                        scout_exist = True
-                        break
-                if not scout_exist:
-                    self.evoked[("scout_unit_tag")] = self.units(UnitTypeId.HELLION).first.tag
-                    self.evoked[(self.units(UnitTypeId.HELLION).first.tag, "offense_mode")] = False
-                    scout_unit_tag = self.evoked.get(("scout_unit_tag"))
-
-
-        # 상대 목록 갱신
-        for unit in self.known_enemy_units.not_structure:
-            if self.enemy_exists.get(unit.tag, None) is None:
-                self.enemy_exists[unit.tag] = unit.type_id
-
-        if not self.units.not_structure.empty:
-            my_groups = self.unit_groups()
-
-        # 수리 중인 MULE이 있는가?
-        self.evoked["is_repairing"] = False
-        for unit in self.units.not_structure:
-            if unit.type_id is UnitTypeId.MULE and unit.is_repairing:
-                self.evoked["is_repairing"] = True
-                break
-
-
         for unit in self.units.not_structure:  # 건물이 아닌 유닛만 선택
+
+            # 수리로봇이 수리 중일 땐 움직이지 않게 한다.
+            # 적이 근처까지 오지 않는 이상 명령을 받지 않음.
+            if unit.tag in [repaired_unit.tag for repaired_unit in self.being_repaired_units_list] and self.select_threat(unit).empty:
+                continue
+
             enemy_unit = self.enemy_start_locations[0]
             if self.known_enemy_units.exists:
                 enemy_unit = self.known_enemy_units.closest_to(unit)  # 가장 가까운 적 유닛
@@ -489,8 +506,8 @@ class Bot(sc2.BotAI):
 
             #self.army_strategy = self.next_army_strategy
 
-            if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK and UnitTypeId.SIEGETANKSIEGED) and not self.evoked.get((unit.tag, "offense_mode"),
-                                                                                      False):
+            if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK and UnitTypeId.SIEGETANKSIEGED and \
+                    UnitTypeId.MULE) and not self.evoked.get((unit.tag, "offense_mode"),False):
                 if unit.type_id is UnitTypeId.HELLION and unit.tag == self.evoked.get(("scout_unit_tag")):
                     pass
                 elif self.army_strategy is ArmyStrategy.DEFENSE:
@@ -527,12 +544,15 @@ class Bot(sc2.BotAI):
                 if unit.type_id is UnitTypeId.MARINE:
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
                         def target_func(unit):
+
+                            if self.first_enemy_Raven is not None:
+                                return self.first_enemy_Raven
+
                             enemies = self.known_enemy_units.filter(lambda e: e.is_visible)
                             if not enemies.empty:
                                 # 보이는 적이 하나라도 있다면, 그 중에 HP가 가장 적은 애 집중타격
                                 return enemies.sorted(lambda u: u.health)[0]
                                 # return enemies.closest_to(unit)
-
                             return self.enemy_cc
 
                         actions = self.moving_shot(actions, unit, 3, target_func, 0.5)
@@ -545,6 +565,10 @@ class Bot(sc2.BotAI):
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
 
                         def target_func(unit):
+
+                            if self.first_enemy_Raven is not None:
+                                return self.first_enemy_Raven
+
                             # 커맨드 스냅샷 포함
                             # 만약 위협이 근처에 존재한다면 위협 제거
                             # 위협이 없다면 가까운애 때리러 가거나 야마토 포 쏘러 감
@@ -565,9 +589,14 @@ class Bot(sc2.BotAI):
                             # 야마토 포 상대 지정
                             # 일정 범위 내 적들에 한해 적용
                             yamato_enemy_range = 15
+
+                            # 근처 밤까마귀가 있다면 야마토 포 우선순위 변경
                             yamato_candidate_id = [UnitTypeId.THORAP, UnitTypeId.THOR, UnitTypeId.BATTLECRUISER,
                                                    UnitTypeId.SIEGETANKSIEGED,
-                                                   UnitTypeId.SIEGETANK, UnitTypeId.RAVEN]
+                                                   UnitTypeId.SIEGETANK, UnitTypeId.RAVEN] if self.first_enemy_Raven is None else \
+                                [UnitTypeId.RAVEN, UnitTypeId.THORAP, UnitTypeId.THOR, UnitTypeId.BATTLECRUISER,
+                                 UnitTypeId.SIEGETANKSIEGED,
+                                 UnitTypeId.SIEGETANK]
 
                             for eunit_id in yamato_candidate_id:
                                 target_candidate = self.known_enemy_units.filter(
@@ -656,6 +685,10 @@ class Bot(sc2.BotAI):
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"),
                                                                                      False):  # 재블린 미사일 모드
                         def target_func(unit):
+
+                            if self.first_enemy_Raven is not None:
+                                return self.first_enemy_Raven
+
                             target = None
                             flying_enemies = self.known_enemy_units.filter(lambda unit: unit.is_flying)  # 공중 유닛
                             best_score = 0
@@ -834,6 +867,7 @@ class Bot(sc2.BotAI):
                 # 근데 그걸 구현을 어떻게 하지 ㅋㅋㅋ
                 # 근처에 없으면 그냥 가까이 있는 지상유닛 아무나 때린다.
                 if unit.type_id is UnitTypeId.HELLION:
+                    # 정찰용 화염차여도 공격 정책일 때는 공격해야 한다.
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
 
                         def target_func(unit):
@@ -854,7 +888,8 @@ class Bot(sc2.BotAI):
 
                         actions = self.moving_shot(actions, unit, 10, target_func)
                     # 내가 정찰용 화염차라면?
-                    elif unit.tag == self.evoked.get(("scout_unit_tag")) and self.time - self.evoked.get((unit.tag, "end_time"), 0.0) >= 10.0:
+                    elif unit.tag == self.evoked.get(("scout_unit_tag")) and self.time - self.evoked.get((unit.tag, "end_time"), 0.0) >= 5.0:
+
                             if self.evoked.get((unit.tag, "scout_routine"), []) == [] :
                                 self.evoked[(unit.tag, "scout_routine")] = ["Center", "RightUp", "RightDown", "LeftDown", "LeftUp", "End"]
 
@@ -870,7 +905,7 @@ class Bot(sc2.BotAI):
                                         actions.append(unit.move(self.ready_right))
                                     break
 
-                            # 적, 아군 통틀어 어떤 유닛이라도 만나면 정찰 방향 수정
+                            # 적, 아군 통틀어 어떤 유닛, 건물이라도 만나면 정찰 방향 수정
                             other_units = self.units - {unit}
                             if (unit.is_idle or other_units.closer_than(4, unit).exists or self.known_enemy_units.closer_than(unit.sight_range, unit).exists) \
                                     and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 3.0 :
@@ -924,53 +959,6 @@ class Bot(sc2.BotAI):
 
                                 self.evoked[(unit.tag, "scout_time")] = self.time
 
-                        # # evoke initialize
-                        #
-                        # if (unit.tag, "scout") not in self.evoked:
-                        #     self.evoked[(unit.tag, "scout")] = False
-                        #
-                        # if self.evoked.get((unit.tag, "scout"), False):
-                        #     # 아무것도 하지 않을 때
-                        #     # 목표 지점에 도달한 것도 포함
-                        #     if unit.is_idle:
-                        #         self.evoked[(unit.tag, "scout")] = False
-                        #     # 적을 만났을 때
-                        #
-                        #
-                        # # 정찰 중이 아닐 때 정찰나감
-                        # if not self.evoked.get((unit.tag, "scout"), False):
-                        #     dest = None
-                        #     if unit.is_idle :
-                        #         if self.time - self.evoked.get(("scout_time"), -20) <= 10.0 :
-                        #             dest = Point2(
-                        #                 (random.randint(0, self.map_width), random.randint(0, self.map_height)))
-                        #             actions.append(unit.attack(dest))
-                        #         else:
-                        #             # 커맨드 invisible이면 우선 보이게 하는 것이 목적
-                        #
-                        #         self.evoked[(unit.tag, "scout")] = True
-                        #
-                        #     else:
-                        #
-                        #         # 정찰 중이 아닌데, 움직이고 있거나 공격 중일때 발생
-                        #         # 쿨타임 중에는 빠지기
-                        #         # 쿨타임이 차면 공격한 다음 빠지기
-                        #         # 단위가 frame
-                        #         def target_func(unit):
-                        #             target = None
-                        #             min_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2) + 10
-                        #             for eunit in self.cached_known_enemy_units:
-                        #                 if eunit.is_visible and not eunit.is_flying and eunit.distance_to(
-                        #                         unit) < min_dist:
-                        #                     # 경장갑 우선 타겟팅
-                        #                     if target is not None and target.is_light and not eunit.is_light:
-                        #                         continue
-                        #                     target = eunit
-                        #                     min_dist = eunit.distance_to(unit)
-                        #             return target
-                        #
-                        #         actions = self.moving_shot(actions, unit, 10, target_func)
-
 
                 # 바이킹 전투기 모드(공중)
                 if unit.type_id is UnitTypeId.VIKINGFIGHTER:
@@ -990,6 +978,9 @@ class Bot(sc2.BotAI):
                             self.evoked["Last_enemy_aircraft_time"] = self.time
 
                             def target_func(unit):
+                                if self.first_enemy_Raven is not None:
+                                    return self.first_enemy_Raven
+
                                 target = first_targets.sorted(lambda e: e.health)[0]
                                 return target
 
@@ -1085,7 +1076,7 @@ class Bot(sc2.BotAI):
                 ## REAPER ##
 
                 if unit.type_id is UnitTypeId.REAPER and self.army_strategy is ArmyStrategy.OFFENSE:
-                    if unit.health_percentage <= .2:  # 20퍼 이하면 도망
+                    if unit.health_percentage <= .4:  # 40퍼 이하면 도망
                         actions.append(unit.move(self.start_location))
                         self.evoked[(unit.tag, "REAPER_RUNAWAY")] = True
                     if self.evoked.get((unit.tag, "REAPER_RUNAWAY"), False):
@@ -1160,8 +1151,26 @@ class Bot(sc2.BotAI):
             ## GHOST ##
 
             if unit.type_id is UnitTypeId.GHOST:
+
+                # 아래 내용은 공격 정책이거나 offense mode가 아닐 시에도 항시 적용됨
+                threats = self.select_threat(unit)
+
+                # 근처에 위협이 존재할 시 클라킹
+                if not threats.empty and not unit.has_buff(BuffId.GHOSTCLOAK) and unit.energy_percentage >= 0.3:
+                    actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_GHOST))
+
+                # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
+                if not threats.empty:
+                    self.evoked[(unit.tag, "GHOST_CLOAK")] = self.time
+
+                if threats.empty and self.time - self.evoked.get((unit.tag, "GHOST_CLOAK"), 0.0) >= 5 \
+                        and unit.has_buff(BuffId.GHOSTCLOAK):
+                    actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_GHOST))
+
+                # 핵 관련 상태 변경
                 if unit.is_using_ability(AbilityId.TACNUKESTRIKE_NUKECALLDOWN) and self.has_nuke:
                     self.has_nuke = False
+
                 if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
                     ghost_abilities = await self.get_available_abilities(unit)
                     if AbilityId.TACNUKESTRIKE_NUKECALLDOWN in ghost_abilities:  # 핵 보유 중이라면
@@ -1181,6 +1190,10 @@ class Bot(sc2.BotAI):
                             actions.append(unit.attack(self.cc.position))  # 핵은 있는데 마나 없으면 마나 채우기
                     else:  # 핵 없으면 생체유닛한테 저격하기 / 공격 OK
                         def target_func(unit):
+
+                            if self.first_enemy_Raven is not None:
+                                return self.first_enemy_Raven
+
                             enemies = self.known_enemy_units
                             light_enemies = enemies.filter(lambda e: e.is_light)
 
@@ -1194,9 +1207,10 @@ class Bot(sc2.BotAI):
                             return target
 
                         if unit.energy >= 50.0:
-                            enemy_biological = self.known_enemy_units.filter(lambda e: e.is_biological)
-                            if not enemy_biological.empty:
-                                target = enemy_biological.closest_to(unit)  # 가장 가까운 생체유닛 저격
+                            # 저격이 아깝지 않은 애는 불곰밖에 없다.(생체 유닛 중)
+                            enemy_MARAUDER = self.known_enemy_units.filter(lambda e: e.type_id is UnitTypeId.MARAUDER)
+                            if not enemy_MARAUDER.empty:
+                                target = enemy_MARAUDER.closest_to(unit)  # 가장 가까운 생체유닛 저격
                                 actions.append(unit(AbilityId.EFFECT_GHOSTSNIPE, target))
                             else:
                                 actions = self.moving_shot(actions, unit, 10, target_func)
@@ -1250,20 +1264,19 @@ class Bot(sc2.BotAI):
 
                 # 아래 내용은 공격 정책이거나 offense mode가 아닐 시에도 항시 적용됨
                 threats = self.select_threat(unit)
-                clock_threats = self.cached_known_enemy_units.filter(
-                    lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
+                # clock_threats = self.cached_known_enemy_units.filter(
+                #     lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
 
                 # 근처에 위협이 존재할 시 클라킹
-                if (clock_threats.empty and not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3) and not threats.empty:
+                if not threats.empty and not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3:
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
                 if not threats.empty:
                     self.evoked[(unit.tag, "BANSHEE_CLOAK")] = self.time
 
-                if clock_threats.empty and threats.empty and (
-                        self.time - self.evoked.get((unit.tag, "BANSHEE_CLOAK"), 0.0) >= 10) and unit.has_buff(
-                    BuffId.BANSHEECLOAK):
+                if threats.empty and self.time - self.evoked.get((unit.tag, "BANSHEE_CLOAK"), 0.0) >= 10 \
+                        and unit.has_buff(BuffId.BANSHEECLOAK):
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
 
                 # 공격 정책이거나 offense mode가 트리거됬을 시
@@ -1289,18 +1302,8 @@ class Bot(sc2.BotAI):
                     # 은신 상태이면서 밤까마귀가 감지하고 있지 않으면 그냥 공격
                     # 그 상태가 아니라면 무빙샷.
                     # TODO : 은신이 감지되고 있는지 확인이 불가함. CloakState 작동 불가
-                    # 불가피하게 밤까마귀의 시야 범위 안에 있는지 확인하는 것으로 대체
-
-                    # 공격 모드 전환
-                    if unit.is_idle and unit.energy_percentage >= 0.3:
-                        actions.append(unit.attack(target_func(unit)))
-
-                    # 이미 교전 중일때 전략 결정
-                    if not unit.is_idle:
-                        if clock_threats.empty and unit.has_buff(BuffId.BANSHEECLOAK):
-                            actions.append(unit.attack(target_func(unit)))
-                        else:
-                            actions = self.moving_shot(actions, unit, 5, target_func)
+                    # 무빙샷 함수 안에 cloak에 대한 예외처리도 되어 있다.
+                    actions = self.moving_shot(actions, unit, 5, target_func)
 
             # 지게로봇
             # 에너지 50을 사용하여 소환
@@ -1311,15 +1314,34 @@ class Bot(sc2.BotAI):
                 if self.cc.health < self.cc.health_max:
                     # 커맨드 수리
                     actions.append(unit(AbilityId.EFFECT_REPAIR_MULE, self.cc))
+                    if unit.is_repairing:
+                        self.evoked[(unit.tag, "being_repaired_unit")] = self.cc
+                    else:
+                        self.evoked[(unit.tag, "being_repaired_unit")] = None
                 else:
                     # 근처 수리 가능한 메카닉 애들을 찾아 수리
                     # 아마 커맨드 근처에 있는 애들이 될 것임.
                     # 어차피 일정 시간 뒤 파괴되므로 HP가 가장 적은 애들을 찾는 것보다는 근처 애들이 나음
-                    repair_candidate = self.units.not_structure.filter(
-                        lambda u: u.is_mechanical and u.health < u.health_max)
-                    if not repair_candidate.empty:
+                    repair_candidate = self.units.not_structure.filter(lambda u: u.is_mechanical and u.health_percentage < 0.5)
+
+                    repair_target = self.evoked.get((unit.tag, "being_repaired_unit"))
+                    # repair_target = self.units.find_by_tag(repair_target_tag)
+                    if unit.is_repairing and repair_target is not None:
+                        repair_target = self.evoked.get((unit.tag, "being_repaired_unit"))
+                        actions.append(unit(AbilityId.EFFECT_REPAIR_MULE, repair_target))
+                        self.evoked[(unit.tag, "being_repaired_unit")] = repair_target
+                    elif not repair_candidate.empty:
                         repair_target = repair_candidate.closest_to(unit)
                         actions.append(unit(AbilityId.EFFECT_REPAIR_MULE, repair_target))
+                        self.evoked[(unit.tag, "being_repaired_unit")] = repair_target
+                    else:
+                        # 할게 없는 상태.
+                        # 평소 대기 시에는 우리 커맨드보다 조금 안쪽에서 대기
+                        if self.cc.position.x < 50:
+                            actions.append(unit.move(Point2((self.cc.position.x - 5, self.cc.position.y))))
+                        else:
+                            actions.append(unit.move(Point2((self.cc.position.x + 5, self.cc.position.y))))
+                        self.evoked[(unit.tag, "being_repaired_unit")] = None
 
         return actions
 
