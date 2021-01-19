@@ -119,6 +119,8 @@ class Bot(sc2.BotAI):
         self.map_height = 63
         self.map_width = 128
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 전체 유닛에서 사령부 검색
+        # 내 그룹 initiate
+        self.my_groups = []
 
         # (32.5, 31.5) or (95.5, 31.5)
         if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0:
@@ -232,7 +234,7 @@ class Bot(sc2.BotAI):
 
         # 아군 그룹 정보 갱신
         if not self.units.not_structure.empty:
-            my_groups = self.unit_groups()
+            self.my_groups = self.unit_groups()
 
         # 아군 수리받는 메카닉 유닛들 cache
         self.being_repaired_units_list = []
@@ -456,15 +458,15 @@ class Bot(sc2.BotAI):
             groups.append(group)
 
         groups.sort(key=lambda g: g.amount, reverse=True)
-        my_groups = []
+        ret_groups = []
 
         # groups가 비는 경우는 시즈탱크 제외 유닛이 아예 없다는 것
         # 이 경우 빈 list 반환
         if not groups:
-            return my_groups
+            return ret_groups
 
         # groups가 비지 않는 경우
-        my_groups.append(groups[0])
+        ret_groups.append(groups[0])
         selected_units = groups[0]
 
         group_num = int(self.units.not_structure.amount / 10.0)
@@ -472,10 +474,10 @@ class Bot(sc2.BotAI):
         for i in range(0, group_num):
             groups.sort(key=lambda g: (g - selected_units).amount, reverse=True)
             # groups.sorted(lambda g : g.filter(lambda u : not (u in selected_units)), reverse=True)
-            my_groups.append(groups[0])
+            ret_groups.append(groups[0])
             selected_units = selected_units or groups[0]
 
-        return my_groups
+        return ret_groups
 
     async def unit_actions(self):
         #
@@ -773,7 +775,7 @@ class Bot(sc2.BotAI):
                     # default : cc.position
                     desired_pos = self.cc.position
 
-                    if my_groups:
+                    if self.my_groups:
                         # 만약 첫 프레임이거나 이전 프레임에 설정된 그룹 센터와 현재 계산된 그룹 센터가 일정 거리 이상(5)다르다면 이동
                         if self.evoked.get((unit.tag, "desire_add_vector"), None) is None:
                             dist = random.randint(5, 9)
@@ -781,15 +783,15 @@ class Bot(sc2.BotAI):
                             dist_y = math.sqrt(dist ** 2 - dist_x ** 2) if random.randint(0, 1) == 0 else -math.sqrt(
                                 dist ** 2 - dist_x ** 2)
                             desire_add_vector = Point2((-dist_x, dist_y))
-                            desired_pos = my_groups[0].center + desire_add_vector
+                            desired_pos = self.my_groups[0].center + desire_add_vector
                             desired_pos = Point2((self.clamp(desired_pos.x, 0, self.map_width),
                                                   self.clamp(desired_pos.y, 0, self.map_height)))
-                            self.evoked[(unit.tag, "group_center")] = my_groups[0].center
+                            self.evoked[(unit.tag, "group_center")] = self.my_groups[0].center
                             self.evoked[(unit.tag, "desire_add_vector")] = desire_add_vector
                         else:
-                            if my_groups[0].center.distance_to(
+                            if self.my_groups[0].center.distance_to(
                                     self.evoked.get((unit.tag, "group_center"), self.cc.position)) > 4:
-                                self.evoked[(unit.tag, "group_center")] = my_groups[0].center
+                                self.evoked[(unit.tag, "group_center")] = self.my_groups[0].center
                             desired_pos = self.evoked.get((unit.tag, "group_center"), self.cc.position) + self.evoked.get(
                                 (unit.tag, "desire_add_vector"), None)
 
@@ -851,8 +853,8 @@ class Bot(sc2.BotAI):
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
 
                     # 어느 때라도 상관없이 그룹 센터가 일정 거리 이상(10)달라지면 시즈모드 풀기(이동 준비)
-                    if my_groups:
-                        if my_groups[0].center.distance_to(self.evoked.get((unit.tag, "group_center"))) > 7:
+                    if self.my_groups:
+                        if self.my_groups[0].center.distance_to(self.evoked.get((unit.tag, "group_center"))) > 7:
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
 
                 ## SIEGE TANK END ##
@@ -1014,18 +1016,18 @@ class Bot(sc2.BotAI):
                                 lambda u: unit.sight_range > unit.distance_to(u))
                             # 일정 시간 이상 적 공중 유닛이 보이지 않고 그룹 센터로부터 일정 범위 안에 들어온다면 착륙(3)
                             if not targets.empty and self.time - self.evoked.get("Last_enemy_aircraft_time", 0.0) >= 2.0\
-                                    and unit.distance_to(my_groups[0].center) < 3.0:
+                                    and unit.distance_to(self.my_groups[0].center) < 3.0:
                                 landing_loc = self.evoked.get((unit.tag, "landing_loc"), None)
                                 if landing_loc is None or not await \
                                         self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc):
-                                    # loc = await self.find_placement(building=AbilityId.MORPH_VIKINGASSAULTMODE, near=my_groups[0].center,
+                                    # loc = await self.find_placement(building=AbilityId.MORPH_VIKINGASSAULTMODE, near=self.my_groups[0].center,
                                     #                             max_distance=20)
                                     dist = random.randint(4, 6)
                                     dist_x = random.randint(3, dist)
                                     dist_y = math.sqrt(dist ** 2 - dist_x ** 2)\
                                         if random.randint(0,1) == 0 else -math.sqrt(dist ** 2 - dist_x ** 2)
                                     desire_add_vector = Point2((-dist_x, dist_y))
-                                    desired_pos = my_groups[0].center + desire_add_vector
+                                    desired_pos = self.my_groups[0].center + desire_add_vector
                                     landing_loc = Point2((self.clamp(desired_pos.x, 0, self.map_width),
                                                           self.clamp(desired_pos.y, 0, self.map_height)))
                                     self.evoked[(unit.tag, "landing_loc")] = landing_loc
@@ -1034,7 +1036,7 @@ class Bot(sc2.BotAI):
                                     actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
                             else:
                                 # 타깃이 없을 때 그룹 센터에서 대기하기 위한 코드
-                                actions.append(unit.move(my_groups[0].center))
+                                actions.append(unit.move(self.my_groups[0].center))
 
 
                 # 바이킹 전투 모드(지상)
@@ -1104,7 +1106,7 @@ class Bot(sc2.BotAI):
                 else:
                     # 회복시킬 유닛이 없으면, 전투 그룹 중앙에서 대기
                     if self.combat_units.exists:
-                        actions.append(unit.move(my_groups[0].center))
+                        actions.append(unit.move(self.my_groups[0].center))
 
             ## MEDIVAC end ##
 
@@ -1144,7 +1146,7 @@ class Bot(sc2.BotAI):
                     # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
                 else:  # 적들이 없으면
                     if self.units.not_structure.exists:  # 전투그룹 중앙 대기
-                        actions.append(unit.move(my_groups[0].center))
+                        actions.append(unit.move(self.my_groups[0].center))
 
                 ## RAVEN END ##
 
