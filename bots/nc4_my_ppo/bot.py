@@ -901,7 +901,7 @@ class Bot(sc2.BotAI):
                                         actions.append(unit.move(self.ready_right))
                                     break
 
-                            # 적, 아군 통틀어 어떤 유닛, 건물이라도 만나면 정찰 방향 수정
+                            # 아군 통틀어 어떤 유닛, 건물이라도 만나면 정찰 방향 수정
                             other_units = self.units - {unit}
                             if (unit.is_idle or other_units.closer_than(4, unit).exists) \
                                     and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 5.0 :
@@ -1140,10 +1140,17 @@ class Bot(sc2.BotAI):
                                     actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
                     # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
                 else:  # 적들이 없으면
-                    if self.units.not_structure.exists:  # 전투그룹 중앙 대기
+                    enemy_banshee = self.known_enemy_units(UnitTypeId.BANSHEE)
+                    if enemy_banshee.exists :
+                        banshee_in_raven = enemy_banshee.closer_than(9.5, unit)
+                        if banshee_in_raven.amount / enemy_banshee.amount >= 0.5 :
+                            actions.append(unit.move(self.cc))
+                        else :
+                            actions.append(unit.move(enemy_banshee.closest_to(unit)))
+                    elif self.units.not_structure.exists:  # 전투그룹 중앙 대기
                         actions.append(unit.move(self.my_groups[0].center))
 
-                ## RAVEN END ##
+            ## RAVEN END ##
 
             ## GHOST ##
 
