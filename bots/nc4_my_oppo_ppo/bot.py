@@ -903,8 +903,8 @@ class Bot(sc2.BotAI):
 
                             # 적, 아군 통틀어 어떤 유닛, 건물이라도 만나면 정찰 방향 수정
                             other_units = self.units - {unit}
-                            if (unit.is_idle or other_units.closer_than(4, unit).exists) \
-                                    and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 5.0 :
+                            if (unit.is_idle or other_units.closer_than(4, unit).exists or self.known_enemy_units.closer_than(unit.sight_range, unit).exists) \
+                                    and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 3.0 :
                                 next = self.evoked.get((unit.tag, "scout_routine"))[0]
 
                                 if next == "Center":
@@ -975,8 +975,7 @@ class Bot(sc2.BotAI):
 
                             def target_func(unit):
 
-                                # target = first_targets.sorted(lambda e: e.health)[0]
-                                target = first_targets.closest_to(unit)
+                                target = first_targets.sorted(lambda e: e.health)[0]
                                 return target
 
                             actions = self.moving_shot(actions, unit, 15, target_func)
@@ -1019,13 +1018,13 @@ class Bot(sc2.BotAI):
                                     dist_x = random.randint(3, dist)
                                     dist_y = math.sqrt(dist ** 2 - dist_x ** 2)\
                                         if random.randint(0,1) == 0 else -math.sqrt(dist ** 2 - dist_x ** 2)
-                                    desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
+                                    desire_add_vector = Point2((-dist_x, dist_y))
                                     desired_pos = self.my_groups[0].center + desire_add_vector
                                     landing_loc = Point2((self.clamp(desired_pos.x, 0, self.map_width),
                                                           self.clamp(desired_pos.y, 0, self.map_height)))
                                     self.evoked[(unit.tag, "landing_loc")] = landing_loc
                                 actions.append(unit.move(landing_loc))
-                                if unit.distance_to(landing_loc) < 5.0:
+                                if unit.distance_to(landing_loc) < 2.0:
                                     actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
                             else:
                                 # 타깃이 없을 때 그룹 센터에서 대기하기 위한 코드
@@ -1037,9 +1036,7 @@ class Bot(sc2.BotAI):
                 if unit.type_id is UnitTypeId.VIKINGASSAULT:
 
                     enemy_air = self.known_enemy_units.flying
-                    # 커맨드 때리는 동안은 공중모드로 변하지 않도록 함.
-                    # 보이는 애들에 한해 타깃 선정!
-                    ground_enemy_units = self.cached_known_enemy_units.filter(lambda u: u.is_visible and not u.is_flying)
+                    ground_enemy_units = self.cached_known_enemy_units.not_structure.not_flying
 
                     # 아래 코드는 모드 상관없이 작동
                     # 적의 지상 유닛이나 커맨드가 보이지 않거나 적 공중유닛이 나타나면 전투기로 변환
