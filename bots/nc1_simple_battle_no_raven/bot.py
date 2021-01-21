@@ -113,7 +113,7 @@ class Bot(sc2.BotAI):
 
         closest_dist = 500
 
-        if not self.known_enemy_units.empty:
+        if not self.known_enemy_units.filter(lambda e: e.is_visible).empty:
             for our_unit in self.units:
                 temp = self.known_enemy_units.closest_distance_to(our_unit)
                 if temp < closest_dist:
