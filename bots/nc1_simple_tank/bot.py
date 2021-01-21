@@ -175,6 +175,10 @@ class Bot(sc2.BotAI):
                 if temp < closest_dist:
                     closest_dist = temp
 
+        # 1등 코드가, 밤까마귀로 하여금 무조건 클라킹한 밴시만 따라다니도록 한다;;
+        enemy_banshees = self.known_enemy_units.filter(lambda u: u.type_id is UnitTypeId.BANSHEE)
+        print("enemy_banshees : ", enemy_banshees.amount)
+
         for unit in self.units.not_structure :
 
             enemy_units = self.known_enemy_units.filter(lambda u: u.is_visible)
@@ -286,11 +290,8 @@ class Bot(sc2.BotAI):
             # RAVEN
             if unit.type_id is UnitTypeId.RAVEN:
 
-                # 1등 코드가, 밤까마귀로 하여금 무조건 클라킹한 밴시만 따라다니도록 한다;;
-                cloaking_banshees = self.known_enemy_units.filter(
-                    lambda u: u.type_id is UnitTypeId.BANSHEE and u.has_buff(BuffId.BANSHEECLOAK))
-                if not cloaking_banshees.empty:
-                    actions.append(unit.move(cloaking_banshees.closest_to(unit)))
+                if not enemy_banshees.empty:
+                    actions.append(unit.move(enemy_banshees.closest_to(unit)))
 
                 if self.attacking == True:  # 공격중
                     if unit.distance_to(target) < 15 and unit.energy > 75:  # 적들이 근처에 있고 마나도 있으면
@@ -324,14 +325,14 @@ class Bot(sc2.BotAI):
                                         actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
                         # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
                     else:  # 적들이 없거나 마나가 없으면
-                        if cloaking_banshees.empty and self.units.not_structure.exists:  # 전투그룹 중앙 조금 뒤 대기
+                        if enemy_banshees.empty and self.units.not_structure.exists:  # 전투그룹 중앙 조금 뒤 대기
                             if self.cc.position.x < 50:
                                 actions.append(
                                     unit.move(Point2((self.units.center.x - 5, self.units.center.y))))
                             else:
                                 actions.append(
                                     unit.move(Point2((self.units.center.x + 5, self.units.center.y))))
-                elif cloaking_banshees.empty:  # 방어모드
+                elif enemy_banshees.empty:  # 방어모드
                     actions.append(unit.move(self.cc))
 
             # 지게로봇
