@@ -320,9 +320,9 @@ class Actor:
                     
                     # pool
                     # set으로 중복 방지
-                    # pool은 oppbot, opp2bot + 동일 배틀 봇 2개 + 동일 탱크 봇 2개 + pool 4개 = max 10개의 봇으로 구성
+                    # pool은 oppbot, opp2bot + 동일 배틀 봇 2개 + 동일 탱크 봇 2개 + 동일 밴시 봇 2개 + pool 4개 = max 12개의 봇으로 구성
                     pool = set(["OppBot", "Opp2Bot", "OppBotBattle", "OppBotBattle", "OppBotBattleNoRaven", "OppBotBattleNoRaven", "OppBotTank", "OppBotTank", "OppBotBanshee", "OppBotBanshee"])
-                    for i in range(1, 4):
+                    for i in range(1, 5):
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
                         if os.path.isfile(model_path):
                             pool.add(str(i))

@@ -157,10 +157,11 @@ class Bot(sc2.BotAI):
 
     async def on_unit_destroyed(self, unit_tag):
         """ Override this in your bot class. """
+        # 적, 아군 유닛 모두 해당이 되어야 할텐데.. (적은 확인)
         self.enemy_exists.pop(unit_tag, None)
-
-        if self.origin_scout is not None :
-            self.evoked[(self.origin_scout, "die")] = self.time
+        # 아군 정찰 화염차가 죽을 때 scout_unit_dead_time 갱신
+        if self.evoked.get(("scout_unit_tag"), None) is not None and unit_tag == self.evoked.get(("scout_unit_tag")):
+            self.evoked["scout_unit_dead_time"] = self.time
 
     async def on_step(self, iteration: int):
         """
@@ -928,14 +929,82 @@ class Bot(sc2.BotAI):
                         actions = self.moving_shot(actions, unit, 10, target_func)
                     # 내가 정찰용 화염차라면?
                     elif unit.tag == self.evoked.get(("scout_unit_tag")) and self.time - self.evoked.get(
-                        (unit.tag, "end_time"), 0.0) >= 8.0: # 원래는 5초
+                        (unit.tag, "end_time"), 0.0) >= 8.0 and (self.evoked.get("scout_unit_dead_time", None) is None or \
+                    (self.evoked.get("scout_unit_dead_time", None) is not None and self.time - self.evoked.get("scout_unit_dead_time") >= 8.0)):# 원래는 5초
 
                         if self.evoked.get((unit.tag, "scout_routine"), []) == []:
                             self.evoked[(unit.tag, "scout_routine")] = ["Center", "RightUp", "RightDown", "LeftDown",
                                                                         "LeftUp", "End"]
 
-                        for eunit in self.cached_known_enemy_units:
-                            if unit.distance_to(eunit) <= unit.sight_range - 2:  # sight : 10, attack : 5
+                        # 적, 아군 통틀어 어떤 유닛, 건물이라도 만나면 정찰 방향 수정
+                        our_other_units = self.units - {unit}
+                        if (unit.is_idle or our_other_units.closer_than(4, unit).exists or self.cached_known_enemy_units.closer_than(unit.sight_range - 2, unit).exists) \
+                                and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 3.0:
+
+                            if self.evoked.get((unit.tag, "scout_mode"), None) is None:
+                                self.evoked[(unit.tag, "scout_mode")] = "ongoing"
+                            else:
+                                if self.evoked.get((unit.tag, "scout_mode")) == "ongoing":
+                                    self.evoked[(unit.tag, "scout_mode")] = "retreat"
+                                else:
+                                    self.evoked[(unit.tag, "scout_mode")] = "ongoing"
+
+                            if self.evoked.get((unit.tag, "scout_mode")) == "ongoing":
+
+                                next = self.evoked.get((unit.tag, "scout_routine"))[0]
+
+                                if next == "Center":
+                                    actions.append(unit.move(self.enemy_cc))
+                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[
+                                                                               1:]
+
+                                elif next == "RightUp":
+                                    if abs(unit.position.y - 31.5) > 5.0:
+                                        actions.append(unit.move(self.right_up))
+                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
+                                            (unit.tag, "scout_routine"))[1:]
+                                    else:
+                                        actions.append(unit.move(Point2((unit.position.x, self.right_up.y))))
+
+
+                                elif next == "RightDown":
+                                    if abs(unit.position.y - 31.5) > 5.0:
+                                        actions.append(unit.move(self.right_down))
+                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
+                                            (unit.tag, "scout_routine"))[1:]
+                                    else:
+                                        actions.append(unit.move(Point2((unit.position.x, self.right_down.y))))
+
+                                elif next == "LeftDown":
+                                    if abs(unit.position.y - 31.5) > 5.0:
+                                        actions.append(unit.move(self.left_down))
+                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
+                                            (unit.tag, "scout_routine"))[1:]
+                                    else:
+                                        actions.append(unit.move(Point2((unit.position.x, self.left_down.y))))
+
+                                elif next == "LeftUp":
+                                    if abs(unit.position.y - 31.5) > 5.0:
+                                        actions.append(unit.move(self.left_up))
+                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
+                                            (unit.tag, "scout_routine"))[1:]
+                                    else:
+                                        actions.append(unit.move(Point2((unit.position.x, self.left_up.y))))
+
+                                elif next == "End":
+                                    if self.army_strategy == ArmyStrategy.DEFENSE:
+                                        actions.append(unit.move(self.cc))
+                                    elif self.army_strategy == ArmyStrategy.READY_LEFT:
+                                        actions.append(unit.move(self.ready_left))
+                                    elif self.army_strategy == ArmyStrategy.READY_CENTER:
+                                        actions.append(unit.move(self.ready_center))
+                                    elif self.army_strategy == ArmyStrategy.READY_RIGHT:
+                                        actions.append(unit.move(self.ready_right))
+
+                                    self.evoked[(unit.tag, "end_time")] = self.time
+                                    self.evoked[(unit.tag, "scout_routine")] = []
+
+                            else:
                                 if self.army_strategy == ArmyStrategy.DEFENSE:
                                     actions.append(unit.move(self.cc))
                                 elif self.army_strategy == ArmyStrategy.READY_LEFT:
@@ -945,63 +1014,6 @@ class Bot(sc2.BotAI):
                                 elif self.army_strategy == ArmyStrategy.READY_RIGHT:
                                     actions.append(unit.move(self.ready_right))
                                 break
-
-                        # 아군 통틀어 어떤 유닛, 건물이라도 만나면 정찰 방향 수정
-                        other_units = self.units - {unit}
-                        if (unit.is_idle or other_units.closer_than(4, unit).exists) \
-                                and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 5.0:
-                            next = self.evoked.get((unit.tag, "scout_routine"))[0]
-
-                            if next == "Center":
-                                actions.append(unit.move(self.enemy_cc))
-                                self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[
-                                                                           1:]
-
-                            elif next == "RightUp":
-                                if abs(unit.position.y - 31.5) > 5.0:
-                                    actions.append(unit.move(self.right_up))
-                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
-                                        (unit.tag, "scout_routine"))[1:]
-                                else:
-                                    actions.append(unit.move(Point2((unit.position.x, self.right_up.y))))
-
-
-                            elif next == "RightDown":
-                                if abs(unit.position.y - 31.5) > 5.0:
-                                    actions.append(unit.move(self.right_down))
-                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
-                                        (unit.tag, "scout_routine"))[1:]
-                                else:
-                                    actions.append(unit.move(Point2((unit.position.x, self.right_down.y))))
-
-                            elif next == "LeftDown":
-                                if abs(unit.position.y - 31.5) > 5.0:
-                                    actions.append(unit.move(self.left_down))
-                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
-                                        (unit.tag, "scout_routine"))[1:]
-                                else:
-                                    actions.append(unit.move(Point2((unit.position.x, self.left_down.y))))
-
-                            elif next == "LeftUp":
-                                if abs(unit.position.y - 31.5) > 5.0:
-                                    actions.append(unit.move(self.left_up))
-                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
-                                        (unit.tag, "scout_routine"))[1:]
-                                else:
-                                    actions.append(unit.move(Point2((unit.position.x, self.left_up.y))))
-
-                            elif next == "End":
-                                if self.army_strategy == ArmyStrategy.DEFENSE:
-                                    actions.append(unit.move(self.cc))
-                                elif self.army_strategy == ArmyStrategy.READY_LEFT:
-                                    actions.append(unit.move(self.ready_left))
-                                elif self.army_strategy == ArmyStrategy.READY_CENTER:
-                                    actions.append(unit.move(self.ready_center))
-                                elif self.army_strategy == ArmyStrategy.READY_RIGHT:
-                                    actions.append(unit.move(self.ready_right))
-
-                                self.evoked[(unit.tag), "end_time"] = self.time
-                                self.evoked[(unit.tag, "scout_routine")] = []
 
                             self.evoked[(unit.tag, "scout_time")] = self.time
 

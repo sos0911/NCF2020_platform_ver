@@ -163,8 +163,8 @@ class Trainer:
         self.mean_score = -1
         self.mybot_version = 1
 
-        for i in range(1, 4):
-            model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
+        for i in range(1, 5):
+            model_path = Path(__file__).parent / ('model' + str(i) + '.pt')
             if os.path.isfile(model_path):
                 self.mybot_version = (self.mybot_version % 4) + 1
 
@@ -405,7 +405,7 @@ class Trainer:
         # 그와는 별개로 역대 최고 모델 model_best.pt를 저장해 둠.
 
         # model save 가능 여부 조절
-        if np.mean(self.scores) <= 0.9 and not self.possible_model_save:
+        if np.mean(self.scores) <= 0.8 and not self.possible_model_save:
             self.possible_model_save = True
 
         if np.mean(self.scores) > self.saved_model_score:
@@ -414,7 +414,7 @@ class Trainer:
             best_model_path = Path(__file__).parent / ('model_best.pt')
             torch.save(self.model.state_dict(), best_model_path)
             self.saved_model_score = np.mean(self.scores)
-        elif np.mean(self.scores) > 0.9:
+        elif np.mean(self.scores) > 0.8:
             cur_model_path = Path(__file__).parent / ('model.pt')
             torch.save(self.model.state_dict(), cur_model_path)
             # model save가 가능하다면 save 후 False 전환
