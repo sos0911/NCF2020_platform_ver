@@ -955,8 +955,7 @@ class Bot(sc2.BotAI):
 
                                 if next == "Center":
                                     actions.append(unit.move(self.enemy_cc))
-                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[
-                                                                               1:]
+                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
 
                                 elif next == "RightUp":
                                     if abs(unit.position.y - 31.5) > 5.0:
