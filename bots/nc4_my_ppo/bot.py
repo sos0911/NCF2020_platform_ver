@@ -51,7 +51,7 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         # wonseok add #
-        self.fc1 = nn.Linear(5 + len(EconomyStrategy) * 2 + 1, 128)
+        self.fc1 = nn.Linear(5 + (len(EconomyStrategy) * 2) + 2, 128)
         # wonseok end #
         self.norm1 = nn.LayerNorm(128)
         self.fc2 = nn.Linear(128, 128)
@@ -108,6 +108,7 @@ class Bot(sc2.BotAI):
 
         # 현재 병영생산전략
         self.economy_strategy = EconomyStrategy.MARINE.value
+        self.next_unit = None
         # 현재 군대전략
         self.army_strategy = ArmyStrategy.DEFENSE
 
@@ -137,10 +138,12 @@ class Bot(sc2.BotAI):
             
 
         # 벌쳐 정찰을 위한 좌표
-        self.left_down = Point2((12.5, 10.5))
-        self.right_down = Point2((110.5, 10.5))
-        self.left_up = Point2((12.5, 51.5))
-        self.right_up = Point2((110.5, 51.5))
+        self.left_down = Point2((12.5, 10.5)) if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0 else Point2((110.5, 10.5))
+        self.right_down = Point2((110.5, 10.5)) if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0 else Point2((12.5, 10.5))
+        self.left_up = Point2((12.5, 51.5)) if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0 else Point2((110.5, 51.5))
+        self.right_up = Point2((110.5, 51.5)) if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0 else Point2((12.5, 51.5))
+
+        self.origin_scout = None
 
         # 밤까마귀 cache
         self.first_enemy_Raven = None
@@ -155,6 +158,9 @@ class Bot(sc2.BotAI):
     async def on_unit_destroyed(self, unit_tag):
         """ Override this in your bot class. """
         self.enemy_exists.pop(unit_tag, None)
+
+        if self.origin_scout is not None :
+            self.evoked[(self.origin_scout, "die")] = self.time
 
     async def on_step(self, iteration: int):
         """
@@ -191,8 +197,8 @@ class Bot(sc2.BotAI):
                     if self.evoked.get(("scout_unit_tag"), None) is not None and unit.tag == self.evoked.get(
                             ("scout_unit_tag")):
                         self.evoked[(unit.tag, "offense_mode")] = False
-                        continue
-                    self.evoked[(unit.tag, "offense_mode")] = True
+                    else:
+                        self.evoked[(unit.tag, "offense_mode")] = True
                 break
             else:
                 self.offense_mode = False
@@ -251,13 +257,17 @@ class Bot(sc2.BotAI):
         # 특징 추출
         #
 
-        # 적 reaper state를 기록하기 위한 +1
-        state = np.zeros(5 + (len(EconomyStrategy) * 2) + 1, dtype=np.float32)
+        # 아군 핵 보유 상태를 기록 +1
+        # 아군 offense_mode 기록 +1
+        state = np.zeros(5 + (len(EconomyStrategy) * 2) + 2, dtype=np.float32)
+
         state[0] = self.cc.health_percentage
-        state[1] = min(1.0, self.minerals / 1000)
-        state[2] = min(1.0, self.vespene / 1000)
-        state[3] = min(1.0, self.time / 360)
-        state[4] = min(1.0, self.state.score.total_damage_dealt_life / 2500)
+        state[1] = self.minerals / 1000
+        state[2] = self.vespene / 1000
+        state[3] = self.time / 360
+        state[4] = self.state.score.total_damage_dealt_life / 2500
+
+        # 아군 유닛 state
         for unit in self.units.not_structure:
             if unit.type_id is UnitTypeId.THORAP:
                 state[5 + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
@@ -268,9 +278,8 @@ class Bot(sc2.BotAI):
             else:
                 state[5 + EconomyStrategy.to_index[unit.type_id]] += 1
 
-        state[5 + len(EconomyStrategy) - 1] = self.has_nuke
-
         # wonseok add #
+        # 적 유닛 state
         for type_id in self.enemy_exists.values():
             if type_id is UnitTypeId.THORAP:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
@@ -281,12 +290,11 @@ class Bot(sc2.BotAI):
             else:
                 state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[type_id]] += 1
 
-        # 적이 핵을 갖고 있는지 안 갖고 있는지는 알 방법이 없다.
-        # 0으로 세팅.
-        # state[5 + len(EconomyStrategy) * 2 - 1] = False
+        # has nuke?
+        state[5 + (len(EconomyStrategy) * 2)] = self.has_nuke
 
         # offense_mode
-        state[5 + len(EconomyStrategy) * 2] = self.offense_mode
+        state[5 + (len(EconomyStrategy) * 2) + 1] = self.offense_mode
 
         state = state.reshape(1, -1)
         # wonseok end #
@@ -318,28 +326,63 @@ class Bot(sc2.BotAI):
         # 사령부 명령 생성
         #
         actions = list()
-        next_unit = self.economy_strategy
+
+        update_flag = False
+
+        if self.known_enemy_units.exists :
+            update_flag = True
+
+        if update_flag or self.next_unit is None :
+            self.next_unit = self.economy_strategy
+
+        # MULE 생산은 하드코딩으로 대체한다.
+        # 커맨드 체력 정도에 따라 MULE이 원하는 숫자보다 적으면 생산
+        desired_MULE_cnt = 0
+        if self.cc.health_percentage <= 0.3:
+            desired_MULE_cnt = 3
+        elif self.cc.health_percentage <= 0.5:
+            desired_MULE_cnt = 2
+        elif self.cc.health_percentage <= 0.7:
+            desired_MULE_cnt = 1
+
+        our_MULE_cnt = self.units.filter(lambda u: u.type_id is UnitTypeId.MULE).amount
+
+        if desired_MULE_cnt > 0 and our_MULE_cnt < desired_MULE_cnt:
+            for i in range(desired_MULE_cnt - our_MULE_cnt):
+                if await self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE, only_check_energy_and_cooldown=True):
+                    if self.cc.position.x < 50:
+                        mule_summon_point = Point2((self.cc.position.x - 5, self.cc.position.y))
+                    else:
+                        mule_summon_point = Point2((self.cc.position.x + 5, self.cc.position.y))
+                        # 정해진 곳에 MULE 소환
+                    actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
+                else:
+                    break
+
         # 핵
-        if next_unit == EconomyStrategy.NUKE.value:
+        if self.next_unit == EconomyStrategy.NUKE.value:
             if self.can_afford(AbilityId.BUILD_NUKE) and not self.has_nuke and self.time - self.evoked.get(
                     (self.cc.tag, 'train'), 0) > 1.0:
                 actions.append(self.cc(AbilityId.BUILD_NUKE))
                 self.has_nuke = True
                 self.evoked[(self.cc.tag, 'train')] = self.time
         # 지게로봇
-        elif next_unit == EconomyStrategy.MULE.value:
-            if await self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE, only_check_energy_and_cooldown=True):
-                if self.cc.position.x < 50:
-                    mule_summon_point = Point2((self.cc.position.x - 5, self.cc.position.y))
-                else:
-                    mule_summon_point = Point2((self.cc.position.x + 5, self.cc.position.y))
-                    # 정해진 곳에 MULE 소환
-                actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
+        # 학습에 맡기지 않고 하드코딩을 하기로 결정.
+        elif self.next_unit == EconomyStrategy.MULE.value:
+            pass
+            # if await self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE, only_check_energy_and_cooldown=True):
+            #     if self.cc.position.x < 50:
+            #         mule_summon_point = Point2((self.cc.position.x - 5, self.cc.position.y))
+            #     else:
+            #         mule_summon_point = Point2((self.cc.position.x + 5, self.cc.position.y))
+            #         # 정해진 곳에 MULE 소환
+            #     actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
         # 나머지
-        elif self.can_afford(next_unit):
+        elif self.can_afford(self.next_unit):
             if self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0:
                 # 해당 유닛 생산 가능하고, 마지막 명령을 발행한지 1초 이상 지났음
-                actions.append(self.cc.train(next_unit))
+                actions.append(self.cc.train(self.next_unit))
+                self.next_unit = None
                 self.evoked[(self.cc.tag, 'train')] = self.time
 
         return actions
@@ -884,76 +927,83 @@ class Bot(sc2.BotAI):
 
                         actions = self.moving_shot(actions, unit, 10, target_func)
                     # 내가 정찰용 화염차라면?
-                    elif unit.tag == self.evoked.get(("scout_unit_tag")) and self.time - self.evoked.get((unit.tag, "end_time"), 0.0) >= 5.0:
+                    elif unit.tag == self.evoked.get(("scout_unit_tag")) and self.time - self.evoked.get(
+                        (unit.tag, "end_time"), 0.0) >= 8.0: # 원래는 5초
 
-                            if self.evoked.get((unit.tag, "scout_routine"), []) == [] :
-                                self.evoked[(unit.tag, "scout_routine")] = ["Center", "RightUp", "RightDown", "LeftDown", "LeftUp", "End"]
+                        if self.evoked.get((unit.tag, "scout_routine"), []) == []:
+                            self.evoked[(unit.tag, "scout_routine")] = ["Center", "RightUp", "RightDown", "LeftDown",
+                                                                        "LeftUp", "End"]
 
-                            for eunit in self.cached_known_enemy_units:
-                                if unit.distance_to(eunit) <= unit.sight_range-2: # sight : 10, attack : 5
-                                    if self.army_strategy == ArmyStrategy.DEFENSE :
-                                        actions.append(unit.move(self.cc))
-                                    elif self.army_strategy == ArmyStrategy.READY_LEFT :
-                                        actions.append(unit.move(self.ready_left))
-                                    elif self.army_strategy == ArmyStrategy.READY_CENTER :
-                                        actions.append(unit.move(self.ready_center))
-                                    elif self.army_strategy == ArmyStrategy.READY_RIGHT :
-                                        actions.append(unit.move(self.ready_right))
-                                    break
+                        for eunit in self.cached_known_enemy_units:
+                            if unit.distance_to(eunit) <= unit.sight_range - 2:  # sight : 10, attack : 5
+                                if self.army_strategy == ArmyStrategy.DEFENSE:
+                                    actions.append(unit.move(self.cc))
+                                elif self.army_strategy == ArmyStrategy.READY_LEFT:
+                                    actions.append(unit.move(self.ready_left))
+                                elif self.army_strategy == ArmyStrategy.READY_CENTER:
+                                    actions.append(unit.move(self.ready_center))
+                                elif self.army_strategy == ArmyStrategy.READY_RIGHT:
+                                    actions.append(unit.move(self.ready_right))
+                                break
 
-                            # 아군 통틀어 어떤 유닛, 건물이라도 만나면 정찰 방향 수정
-                            other_units = self.units - {unit}
-                            if (unit.is_idle or other_units.closer_than(4, unit).exists) \
-                                    and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 5.0 :
-                                next = self.evoked.get((unit.tag, "scout_routine"))[0]
+                        # 아군 통틀어 어떤 유닛, 건물이라도 만나면 정찰 방향 수정
+                        other_units = self.units - {unit}
+                        if (unit.is_idle or other_units.closer_than(4, unit).exists) \
+                                and self.time - self.evoked.get((unit.tag, "scout_time"), 0) >= 5.0:
+                            next = self.evoked.get((unit.tag, "scout_routine"))[0]
 
-                                if next == "Center":
-                                    actions.append(unit.move(self.enemy_cc))
-                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
+                            if next == "Center":
+                                actions.append(unit.move(self.enemy_cc))
+                                self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[
+                                                                           1:]
 
-                                elif next == "RightUp" :
-                                    if abs(unit.position.y - 31.5) > 5.0 :
-                                        actions.append(unit.move(self.right_up))
-                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
-                                    else :
-                                        actions.append(unit.move(Point2((unit.position.x, self.right_up.y))))
-                                        
+                            elif next == "RightUp":
+                                if abs(unit.position.y - 31.5) > 5.0:
+                                    actions.append(unit.move(self.right_up))
+                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
+                                        (unit.tag, "scout_routine"))[1:]
+                                else:
+                                    actions.append(unit.move(Point2((unit.position.x, self.right_up.y))))
 
-                                elif next == "RightDown" :
-                                    if abs(unit.position.y - 31.5) > 5.0 :
-                                        actions.append(unit.move(self.right_down))
-                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
-                                    else :
-                                        actions.append(unit.move(Point2((unit.position.x, self.right_down.y))))
 
-                                elif next == "LeftDown" :
-                                    if abs(unit.position.y - 31.5) > 5.0 :
-                                        actions.append(unit.move(self.left_down))
-                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
-                                    else :
-                                        actions.append(unit.move(Point2((unit.position.x, self.left_down.y))))
+                            elif next == "RightDown":
+                                if abs(unit.position.y - 31.5) > 5.0:
+                                    actions.append(unit.move(self.right_down))
+                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
+                                        (unit.tag, "scout_routine"))[1:]
+                                else:
+                                    actions.append(unit.move(Point2((unit.position.x, self.right_down.y))))
 
-                                elif next == "LeftUp" :
-                                    if abs(unit.position.y - 31.5) > 5.0 :
-                                        actions.append(unit.move(self.left_up))
-                                        self.evoked[(unit.tag, "scout_routine")] = self.evoked.get((unit.tag, "scout_routine"))[1:]
-                                    else :
-                                        actions.append(unit.move(Point2((unit.position.x, self.left_up.y))))
+                            elif next == "LeftDown":
+                                if abs(unit.position.y - 31.5) > 5.0:
+                                    actions.append(unit.move(self.left_down))
+                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
+                                        (unit.tag, "scout_routine"))[1:]
+                                else:
+                                    actions.append(unit.move(Point2((unit.position.x, self.left_down.y))))
 
-                                elif next == "End" :
-                                    if self.army_strategy == ArmyStrategy.DEFENSE :
-                                        actions.append(unit.move(self.cc))
-                                    elif self.army_strategy == ArmyStrategy.READY_LEFT :
-                                        actions.append(unit.move(self.ready_left))
-                                    elif self.army_strategy == ArmyStrategy.READY_CENTER :
-                                        actions.append(unit.move(self.ready_center))
-                                    elif self.army_strategy == ArmyStrategy.READY_RIGHT :
-                                        actions.append(unit.move(self.ready_right))
+                            elif next == "LeftUp":
+                                if abs(unit.position.y - 31.5) > 5.0:
+                                    actions.append(unit.move(self.left_up))
+                                    self.evoked[(unit.tag, "scout_routine")] = self.evoked.get(
+                                        (unit.tag, "scout_routine"))[1:]
+                                else:
+                                    actions.append(unit.move(Point2((unit.position.x, self.left_up.y))))
 
-                                    self.evoked[(unit.tag), "end_time"] = self.time
-                                    self.evoked[(unit.tag, "scout_routine")] = []
+                            elif next == "End":
+                                if self.army_strategy == ArmyStrategy.DEFENSE:
+                                    actions.append(unit.move(self.cc))
+                                elif self.army_strategy == ArmyStrategy.READY_LEFT:
+                                    actions.append(unit.move(self.ready_left))
+                                elif self.army_strategy == ArmyStrategy.READY_CENTER:
+                                    actions.append(unit.move(self.ready_center))
+                                elif self.army_strategy == ArmyStrategy.READY_RIGHT:
+                                    actions.append(unit.move(self.ready_right))
 
-                                self.evoked[(unit.tag, "scout_time")] = self.time
+                                self.evoked[(unit.tag), "end_time"] = self.time
+                                self.evoked[(unit.tag, "scout_routine")] = []
+
+                            self.evoked[(unit.tag, "scout_time")] = self.time
 
 
                 # 바이킹 전투기 모드(공중)
@@ -1270,7 +1320,7 @@ class Bot(sc2.BotAI):
                 #     lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
 
                 # 근처에 위협이 존재할 시 클라킹
-                if not threats.empty and not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3:
+                if not threats.empty and threats.amount >= 3 and not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3:
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충

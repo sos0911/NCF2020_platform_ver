@@ -199,7 +199,7 @@ class Bot(sc2.BotAI):
                     actions.append(unit.attack(target))
 
                 if unit.type_id in (UnitTypeId.MARINE, UnitTypeId.MARAUDER):
-                    if self.army_strategy is ArmyStrategy.OFFENSE and unit.distance_to(target) < 15:
+                    if self.army_strategy is ArmyStrategy.OFFENSE and unit.distance_to(target) < 15 and self.known_enemy_units.amount >= 3:
                         # 유닛과 목표의 거리가 15이하일 경우 스팀팩 사용
                         if not unit.has_buff(BuffId.STIMPACK) and unit.health_percentage > 0.5:
                             # 현재 스팀팩 사용중이 아니며, 체력이 50% 이상

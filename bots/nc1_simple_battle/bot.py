@@ -68,6 +68,9 @@ class Bot(sc2.BotAI):
         #
         # 빌드 오더 생성
         #
+        if self.attacking == True and self.units(UnitTypeId.BATTLECRUISER).amount <= 0 :
+            self.evoked['go'] = False
+
         if self.evoked.get('go', False) :
             self.attacking = True
         elif self.units(UnitTypeId.BATTLECRUISER).amount >= 3 :
@@ -132,19 +135,20 @@ class Bot(sc2.BotAI):
 
         # 1등 코드가, 밤까마귀로 하여금 무조건 클라킹한 밴시만 따라다니도록 한다;;
         enemy_banshees = self.known_enemy_units.filter(lambda u: u.type_id is UnitTypeId.BANSHEE)
-        print("enemy_banshees : ", enemy_banshees.amount)
+        #print("enemy_banshees : ", enemy_banshees.amount)
 
         for unit in self.units.not_structure :
 
             enemy_units = self.known_enemy_units.filter(lambda u:u.is_visible)
-            if enemy_units.exists:
-                target = enemy_units.closest_to(unit)  # 가장 가까운 적 유닛
+            if enemy_units.in_attack_range_of(unit).exists:
+                target = enemy_units.in_attack_range_of(unit).closest_to(unit)  # 가장 가까운 적 유닛
             else:
                 target = self.enemy_cc
 
             if not unit.type_id in [UnitTypeId.RAVEN, UnitTypeId.MULE]:
                 if unit.type_id is UnitTypeId.RAVEN:
-                    print("check")
+                    pass
+                    #print("check")
                 if self.attacking == False and closest_dist > 7.0:
                     actions.append(unit.attack(self.rally_point))
                 else:
@@ -152,7 +156,7 @@ class Bot(sc2.BotAI):
 
 
             if unit.type_id is UnitTypeId.MARINE :
-                if unit.distance_to(target) < 15 and self.attacking == True:
+                if unit.distance_to(target) < 15 and self.attacking == True and self.known_enemy_units.amount >= 3:
                     # 해병과 목표의 거리가 15이하일 경우 스팀팩 사용
                     if not unit.has_buff(BuffId.STIMPACK) and unit.health_percentage > 0.5:
                         # 현재 스팀팩 사용중이 아니며, 체력이 50% 이상

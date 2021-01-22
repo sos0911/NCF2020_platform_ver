@@ -163,6 +163,11 @@ class Trainer:
         self.mean_score = -1
         self.mybot_version = 1
 
+        for i in range(1, 4):
+            model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
+            if os.path.isfile(model_path):
+                self.mybot_version = (self.mybot_version % 4) + 1
+
         self.env = Environment(args)
         self.batch_buffer = list()
 

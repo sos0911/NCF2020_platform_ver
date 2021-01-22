@@ -53,8 +53,3 @@ Sample = namedtuple('Sample', 's, a, r, done, logp, value')
 class MessageType(Enum):
     RESULT = 0
     EXCEPTION = 1
-
-# wonseok add #
-N_FEATURES = 5 + 13
-# wonseok end #
-N_ACTIONS = len(EconomyStrategy) * len(ArmyStrategy)

@@ -27,6 +27,7 @@ from ..nc4_simple_ppo.bot import Bot as Opp2Bot
 from ..nc1_simple_tank.bot import Bot as OppBotTank
 from ..nc1_simple_battle.bot import Bot as OppBotBattle
 from ..nc1_simple_battle_no_raven.bot import Bot as OppBotBattleNoRaven
+from ..nc1_simple_banshee.bot import Bot as OppBotBanshee
 
 from .bot import Bot as MyBot
 from .consts import CommandType
@@ -320,8 +321,8 @@ class Actor:
                     # pool
                     # set으로 중복 방지
                     # pool은 oppbot, opp2bot + 동일 배틀 봇 2개 + 동일 탱크 봇 2개 + pool 4개 = max 10개의 봇으로 구성
-                    pool = set(["OppBot", "Opp2Bot", "OppBotBattle", "OppBotBattle", "OppBotBattleNoRaven", "OppBotBattleNoRaven", "OppBotTank", "OppBotTank"])
-                    for i in range(1, 5):
+                    pool = set(["OppBot", "Opp2Bot", "OppBotBattle", "OppBotBattle", "OppBotBattleNoRaven", "OppBotBattleNoRaven", "OppBotTank", "OppBotTank", "OppBotBanshee", "OppBotBanshee"])
+                    for i in range(1, 4):
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
                         if os.path.isfile(model_path):
                             pool.add(str(i))
@@ -339,6 +340,8 @@ class Actor:
                         players[1] = _Bot(Race.Terran, OppBotBattleNoRaven())
                     elif bot_str == "OppBotTank" :
                         players[1] = _Bot(Race.Terran, OppBotTank())
+                    elif bot_str == "OppBotBanshee" :
+                        players[1] = _Bot(Race.Terran, OppBotBanshee())
                     else :
                         players[1] = _Bot(Race.Terran, MyBot(step_interval, hostname, None, bot_str))
 
