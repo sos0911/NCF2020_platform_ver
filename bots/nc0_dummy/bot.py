@@ -69,31 +69,31 @@ class Bot(sc2.BotAI):
                         self.evoked["train"] += 1
                         self.evoked[(cc.tag, 'train')] = self.time
 
+        # #
+        # # 해병 명령 생성
+        # #
+        # marines = self.units(UnitTypeId.MARINE)  # 해병 검색
+        # for marine in marines:
+        #     enemy_cc = self.enemy_start_locations[0]  # 적 시작 위치
+        #     enemy_unit = self.enemy_start_locations[0]
+        #     if self.known_enemy_units.exists:
+        #         enemy_unit = self.known_enemy_units.closest_to(marine)  # 가장 가까운 적 유닛
         #
-        # 해병 명령 생성
+        #     # 적 사령부와 가장 가까운 적 유닛중 더 가까운 것을 목표로 공격 명령 생성
+        #     if marine.distance_to(enemy_cc) < marine.distance_to(enemy_unit):
+        #         target = enemy_cc
+        #     else:
+        #         target = enemy_unit
+        #     actions.append(marine.attack(target))
         #
-        marines = self.units(UnitTypeId.MARINE)  # 해병 검색
-        for marine in marines:
-            enemy_cc = self.enemy_start_locations[0]  # 적 시작 위치
-            enemy_unit = self.enemy_start_locations[0]
-            if self.known_enemy_units.exists:
-                enemy_unit = self.known_enemy_units.closest_to(marine)  # 가장 가까운 적 유닛
-
-            # 적 사령부와 가장 가까운 적 유닛중 더 가까운 것을 목표로 공격 명령 생성
-            if marine.distance_to(enemy_cc) < marine.distance_to(enemy_unit):
-                target = enemy_cc
-            else:
-                target = enemy_unit
-            actions.append(marine.attack(target))
-
-            if marine.distance_to(target) < 15:
-                # 해병과 목표의 거리가 15이하일 경우 스팀팩 사용
-                if not marine.has_buff(BuffId.STIMPACK) and marine.health_percentage > 0.5:
-                    # 현재 스팀팩 사용중이 아니며, 체력이 50% 이상
-                    if self.time - self.evoked.get((marine.tag, AbilityId.EFFECT_STIM), 0) > 1.0:
-                        # 1초 이전에 스팀팩을 사용한 적이 없음
-                        actions.append(marine(AbilityId.EFFECT_STIM))
-                        self.evoked[(marine.tag, AbilityId.EFFECT_STIM)] = self.time
+        #     if marine.distance_to(target) < 15:
+        #         # 해병과 목표의 거리가 15이하일 경우 스팀팩 사용
+        #         if not marine.has_buff(BuffId.STIMPACK) and marine.health_percentage > 0.5:
+        #             # 현재 스팀팩 사용중이 아니며, 체력이 50% 이상
+        #             if self.time - self.evoked.get((marine.tag, AbilityId.EFFECT_STIM), 0) > 1.0:
+        #                 # 1초 이전에 스팀팩을 사용한 적이 없음
+        #                 actions.append(marine(AbilityId.EFFECT_STIM))
+        #                 self.evoked[(marine.tag, AbilityId.EFFECT_STIM)] = self.time
 
         # #
         # # 의료선 명령 생성

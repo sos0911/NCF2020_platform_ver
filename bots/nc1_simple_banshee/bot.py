@@ -203,7 +203,7 @@ class Bot(sc2.BotAI):
                             actions.append(unit(AbilityId.EFFECT_STIM))
                             self.evoked[(unit.tag, AbilityId.EFFECT_STIM)] = self.time
 
-                        # 밴시
+            # 밴시
             # 공성전차를 위주로 잡게 한다.
             # 기본적으로 공성전차를 찾아다니되 들키면 튄다 ㅎㅎ
             if unit.type_id is UnitTypeId.BANSHEE:
@@ -214,7 +214,10 @@ class Bot(sc2.BotAI):
                 #     lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
 
                 # 근처에 위협이 존재할 시 클라킹
-                if not threats.empty and threats.amount >= 3 and not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3:
+                # 하지만 정찰 유닛(마린 1기)만 있을 시에는 클라킹을 하지 않는다.
+                # 이 경우는 하는 것이 손해!
+                if not threats.empty and not (threats.amount == 1 and threats.first.type_id == UnitTypeId.MARINE) and \
+                        not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3:
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
@@ -225,8 +228,8 @@ class Bot(sc2.BotAI):
                         and unit.has_buff(BuffId.BANSHEECLOAK):
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
 
-                # 공격 정책이거나 offense mode가 트리거됬을 시
-                if self.attacking == True:
+                # attacking 시에
+                if self.attacking:
 
                     def target_func(unit):
                         enemy_tanks = self.cached_known_enemy_units.filter(
@@ -236,10 +239,11 @@ class Bot(sc2.BotAI):
                             return target
                         # 만약 탱크가 없다면 HP가 가장 적으면서 가까운 아무 지상 유닛이나, 그것도 없다면 커맨드 직행
                         else:
-                            targets = self.cached_known_enemy_units.filter(lambda u: u.type_id is not UnitTypeId.COMMANDCENTER and not u.is_flying)
-                            max_dist = math.sqrt(self.map_height**2 + self.map_width**2)
+                            targets = self.cached_known_enemy_units.filter(
+                                lambda u: u.type_id is not UnitTypeId.COMMANDCENTER and not u.is_flying)
+                            max_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2)
                             if not targets.empty:
-                                target = targets.sorted(lambda u: u.health_percentage + unit.distance_to(u)/max_dist)[0]
+                                target = targets.sorted(lambda u: u.health_percentage + unit.distance_to(u) / max_dist)[0]
                                 return target
                             else:
                                 return self.enemy_cc
@@ -249,7 +253,7 @@ class Bot(sc2.BotAI):
                     # 그 상태가 아니라면 무빙샷.
                     # TODO : 은신이 감지되고 있는지 확인이 불가함. CloakState 작동 불가
                     # 무빙샷 함수 안에 cloak에 대한 예외처리도 되어 있다.
-                    actions.append(unit.attack(target))
+                    actions = self.moving_shot(actions, unit, 5, target_func)
 
             # RAVEN
             if unit.type_id is UnitTypeId.RAVEN:

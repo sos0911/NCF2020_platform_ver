@@ -161,12 +161,20 @@ class Trainer:
 
         # for pool
         self.mean_score = -1
-        self.mybot_version = 1
+        self.mybot_version = None
+        bot_version_path = Path(__file__).parent / ('bot_version.txt')
+        # version 파일이 있다면 내용을 가져오기.
+        if os.path.isfile(bot_version_path):
+            self.version_reader = open(bot_version_path, 'r')
+            self.mybot_version = self.version_reader.readline()
+        else:
+            self.mybot_version = 1
+        self.version_writer = open(bot_version_path, 'w')
 
-        for i in range(1, 5):
-            model_path = Path(__file__).parent / ('model' + str(i) + '.pt')
-            if os.path.isfile(model_path):
-                self.mybot_version = (self.mybot_version % 4) + 1
+        # for i in range(1, 5):
+        #     model_path = Path(__file__).parent / ('model' + str(i) + '.pt')
+        #     if os.path.isfile(model_path):
+        #         self.mybot_version = (self.mybot_version % 4) + 1
 
         self.env = Environment(args)
         self.batch_buffer = list()
@@ -405,7 +413,7 @@ class Trainer:
         # 그와는 별개로 역대 최고 모델 model_best.pt를 저장해 둠.
 
         # model save 가능 여부 조절
-        if np.mean(self.scores) <= 0.8 and not self.possible_model_save:
+        if np.mean(self.scores) <= 0.9 and not self.possible_model_save:
             self.possible_model_save = True
 
         if np.mean(self.scores) > self.saved_model_score:
@@ -414,7 +422,7 @@ class Trainer:
             best_model_path = Path(__file__).parent / ('model_best.pt')
             torch.save(self.model.state_dict(), best_model_path)
             self.saved_model_score = np.mean(self.scores)
-        elif np.mean(self.scores) > 0.8:
+        elif np.mean(self.scores) > 0.9:
             cur_model_path = Path(__file__).parent / ('model.pt')
             torch.save(self.model.state_dict(), cur_model_path)
             # model save가 가능하다면 save 후 False 전환
@@ -423,6 +431,7 @@ class Trainer:
                 pool_model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
                 torch.save(self.model.state_dict(), pool_model_path)
                 self.mybot_version = (self.mybot_version % 4) + 1
+                self.version_writer.write(self.mybot_version)
                 self.possible_model_save = False
 
     def stop(self):
