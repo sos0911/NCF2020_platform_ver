@@ -367,6 +367,7 @@ class Bot(sc2.BotAI):
                     # 우선순위 1
                     # 눈에 보이는(visible) 공중 유닛 대상
                     first_targets = self.known_enemy_units.filter(lambda e: e.is_flying and e.is_visible)
+                    print("first_targets : ", first_targets.amount)
                     if not first_targets.empty:
 
                         self.evoked["Last_enemy_aircraft_time"] = self.time
