@@ -162,19 +162,30 @@ class Trainer:
         # for pool
         self.mean_score = -1
         self.mybot_version = None
-        bot_version_path = Path(__file__).parent / ('bot_version.txt')
+        self.bot_cache_path = Path(__file__).parent / ('bot_cache.txt')
         # version 파일이 있다면 내용을 가져오기.
-        if os.path.isfile(bot_version_path):
-            self.version_reader = open(bot_version_path, 'r')
-            self.mybot_version = self.version_reader.readline()
+        if os.path.isfile(self.bot_cache_path):
+            with open(self.bot_cache_path, 'r') as cache_reader:
+                Info_cache = cache_reader.read()
+                # 비어 있지 않을 때 내용을 가져와 mybot_version에 넣는다.
+                if Info_cache != '':
+                    splited_Info = Info_cache.split()
+                    self.mybot_version = int(splited_Info[0])
+                    self.saved_model_score = float(splited_Info[1])
+                else:
+                    self.mybot_version = 1
+                    # 혹시 모르는 cache 파일은 없고 모델만 생겼을 때를 대비.
+                    for i in range(1, 5):
+                        model_path = Path(__file__).parent / ('model' + str(i) + '.pt')
+                        if os.path.isfile(model_path):
+                            self.mybot_version = (self.mybot_version % 4) + 1
         else:
             self.mybot_version = 1
-        self.version_writer = open(bot_version_path, 'w')
-
-        # for i in range(1, 5):
-        #     model_path = Path(__file__).parent / ('model' + str(i) + '.pt')
-        #     if os.path.isfile(model_path):
-        #         self.mybot_version = (self.mybot_version % 4) + 1
+            # 혹시 모르는 cache 파일은 없고 모델만 생겼을 때를 대비.
+            for i in range(1, 5):
+                model_path = Path(__file__).parent / ('model' + str(i) + '.pt')
+                if os.path.isfile(model_path):
+                    self.mybot_version = (self.mybot_version % 4) + 1
 
         self.env = Environment(args)
         self.batch_buffer = list()
@@ -422,6 +433,8 @@ class Trainer:
             best_model_path = Path(__file__).parent / ('model_best.pt')
             torch.save(self.model.state_dict(), best_model_path)
             self.saved_model_score = np.mean(self.scores)
+            with open(self.bot_cache_path, 'w') as cache_writer:
+                cache_writer.write(f'{self.mybot_version} {self.saved_model_score:.3f}')
         elif np.mean(self.scores) > 0.9:
             cur_model_path = Path(__file__).parent / ('model.pt')
             torch.save(self.model.state_dict(), cur_model_path)
@@ -431,8 +444,9 @@ class Trainer:
                 pool_model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
                 torch.save(self.model.state_dict(), pool_model_path)
                 self.mybot_version = (self.mybot_version % 4) + 1
-                self.version_writer.write(self.mybot_version)
                 self.possible_model_save = False
+                with open(self.bot_cache_path, 'w') as cache_writer:
+                    cache_writer.write(f'{self.mybot_version} {self.saved_model_score:.3f}')
 
     def stop(self):
         self.running = False

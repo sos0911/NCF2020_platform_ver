@@ -56,6 +56,70 @@ class Bot(sc2.BotAI):
     def clamp(self, num, min_value, max_value):
         return max(min(num, max_value), min_value)
 
+    # 무빙샷
+    def moving_shot(self, actions, unit, cooldown, target_func, margin_health: float = 0, minimum: float = 0):
+        # print("WEAPON COOLDOWN : ", unit.weapon_cooldown)
+        if unit.weapon_cooldown < cooldown:
+            target = target_func(unit)
+            if self.time - self.evoked.get((unit.tag, "COOLDOWN"), 0.0) >= minimum:
+                actions.append(unit.attack(target))
+                self.evoked[(unit.tag, "COOLDOWN")] = self.time
+
+        elif (margin_health == 0 or unit.health_percentage <= margin_health) and self.time - self.evoked.get(
+                (unit.tag, "COOLDOWN"), 0.0) >= minimum:  # 무빙을 해야한다면
+            maxrange = 0
+            total_move_vector = Point2((0, 0))
+            showing_only_enemy_units = self.known_enemy_units.not_structure.filter(lambda e: e.is_visible)
+
+            # 자신이 클라킹 상태가 아닐 때나 클라킹 상태이지만 발각됬을 때
+            if not unit.is_cloaked or unit.is_revealed:
+                if not unit.is_flying:
+                    # 배틀크루저 예외처리.
+                    # 배틀은 can_attack_air/ground와 무기 범위가 다 false, 0이다.
+                    threats = showing_only_enemy_units.filter(
+                        lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                                u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u))))
+                    for eunit in threats:
+                        if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                            maxrange = max(maxrange, 6)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        else:
+                            maxrange = max(maxrange, eunit.ground_range)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.ground_range + 2 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                else:
+                    threats = showing_only_enemy_units.filter(
+                        lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                                u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))))
+                    for eunit in threats:
+                        if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                            maxrange = max(maxrange, 6)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        else:
+                            maxrange = max(maxrange, eunit.air_range)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.air_range + 2 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+
+                if not threats.empty:
+                    total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                    total_move_vector *= maxrange
+                    # 이동!
+                    dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                   self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                    actions.append(unit.move(dest))
+
+        return actions
+
     def select_threat(self, unit):
         # 자신에게 위협이 될 만한 상대 유닛들을 리턴
         # 자신이 배틀크루저일때 예외처리 필요.. 정보가 제대로 나오나?
@@ -232,14 +296,14 @@ class Bot(sc2.BotAI):
                 if self.attacking:
 
                     def target_func(unit):
-                        enemy_tanks = self.cached_known_enemy_units.filter(
+                        enemy_tanks = self.known_enemy_units.filter(
                             lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
                         if enemy_tanks.amount > 0:
                             target = enemy_tanks.closest_to(unit.position)
                             return target
                         # 만약 탱크가 없다면 HP가 가장 적으면서 가까운 아무 지상 유닛이나, 그것도 없다면 커맨드 직행
                         else:
-                            targets = self.cached_known_enemy_units.filter(
+                            targets = self.known_enemy_units.filter(
                                 lambda u: u.type_id is not UnitTypeId.COMMANDCENTER and not u.is_flying)
                             max_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2)
                             if not targets.empty:

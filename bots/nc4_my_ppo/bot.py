@@ -181,8 +181,9 @@ class Bot(sc2.BotAI):
             lambda u: u.is_biological and u.health_percentage < 1.0
         )  # 체력이 100% 이하인 유닛 검색
 
-        self.cached_known_enemy_units = self.known_enemy_units()
-        self.cached_known_enemy_structures = self.known_enemy_structures()
+        # self.cached_known_enemy_units = self.known_enemy_units()
+        # self.cached_known_enemy_structures = self.known_enemy_structures()
+        
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first # 왠지는 모르겠는데 이걸 추가해야 실시간 tracking이 된다..
 
         # 공격 모드가 아닌 기타 모드일때
@@ -503,10 +504,10 @@ class Bot(sc2.BotAI):
         groups.sort(key=lambda g: g.amount, reverse=True)
         ret_groups = []
 
-        # groups가 비는 경우는 시즈탱크 제외 유닛이 아예 없다는 것
-        # 이 경우 빈 list 반환
+        # groups가 비는 경우는 위에서 제외한 유닛을 제외하고 유닛이 아예 없다는 것
+        # 이 경우 아군 커맨드가 그룹 센터가 되게끔 반환
         if not groups:
-            return ret_groups
+            return [self.units.structure]
 
         # groups가 비지 않는 경우
         ret_groups.append(groups[0])
@@ -747,13 +748,13 @@ class Bot(sc2.BotAI):
                             if target is None:
                                 target = self.enemy_cc
                                 min_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2) + 10
-                                for eunit in self.cached_known_enemy_units:
+                                for eunit in self.known_enemy_units:
                                     if eunit.is_visible and eunit.distance_to(unit) < min_dist:
                                         target = eunit
                                         min_dist = eunit.distance_to(unit)
                             return target
 
-                        enemy_inrange_units = self.cached_known_enemy_units.in_attack_range_of(unit)
+                        enemy_inrange_units = self.known_enemy_units.in_attack_range_of(unit)
                         if enemy_inrange_units.filter(lambda e: e.is_flying).empty:
                             actions.append(unit.attack(target_func(unit)))
                         else:
@@ -779,7 +780,7 @@ class Bot(sc2.BotAI):
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"),
                                                                                      False):  # 250mm 천벌포 모드
                         def target_func(unit):
-                            enemy_inrange_units = self.cached_known_enemy_units.in_attack_range_of(unit)
+                            enemy_inrange_units = self.known_enemy_units.in_attack_range_of(unit)
                             enemy_flying_heavy = enemy_inrange_units.filter(lambda u: u.is_armored)
 
                             if self.known_enemy_units.empty:
@@ -790,7 +791,7 @@ class Bot(sc2.BotAI):
                                 target = enemy_flying_heavy.sorted(lambda e: e.health)[0]
                             return target
 
-                        enemy_inrange_units = self.cached_known_enemy_units.in_attack_range_of(unit)
+                        enemy_inrange_units = self.known_enemy_units.in_attack_range_of(unit)
                         if enemy_inrange_units.filter(lambda e: e.is_flying).empty:
                             actions.append(unit.attack(target_func(unit)))
                         else:
@@ -835,8 +836,8 @@ class Bot(sc2.BotAI):
                     # 근처 위협이 있다면 무빙샷
                     def target_func(unit):
                         selected_enemies = []
-                        if self.cached_known_enemy_units.not_structure.exists:
-                            selected_enemies = self.cached_known_enemy_units.not_structure.filter(
+                        if self.known_enemy_units.not_structure.exists:
+                            selected_enemies = self.known_enemy_units.not_structure.filter(
                                 lambda u: u.is_visible and not u.is_flying)
                         if selected_enemies.empty:
                             return self.enemy_cc
@@ -914,7 +915,7 @@ class Bot(sc2.BotAI):
                             # 경장갑 우선 타겟팅
                             # 유닛 중 가장 가까운 애 때리기.
                             # 경장갑이 없으면 나머지 중 가장 가까운 놈 때리기
-                            targets = self.cached_known_enemy_units.not_structure.not_flying
+                            targets = self.known_enemy_units.not_structure.not_flying
                             if targets.empty:
                                 return self.enemy_cc # point2
 
@@ -938,7 +939,7 @@ class Bot(sc2.BotAI):
 
                         # 적, 아군 통틀어 어떤 유닛, 건물이라도 만나면 정찰 방향 수정
                         our_other_units = self.units - {unit}
-                        if (unit.is_idle or our_other_units.closer_than(4, unit).exists or self.cached_known_enemy_units.closer_than(unit.sight_range - 2, unit).exists) \
+                        if (unit.is_idle or our_other_units.closer_than(4, unit).exists or self.known_enemy_units.closer_than(unit.sight_range - 2, unit).exists) \
                                 and self.time - self.evoked.get((unit.tag, "scout_time"), -3.0) >= 3.0:
 
                             if self.evoked.get((unit.tag, "scout_mode"), None) is None:
@@ -1093,7 +1094,7 @@ class Bot(sc2.BotAI):
                     enemy_air = self.known_enemy_units.flying
                     # 커맨드 때리는 동안은 공중모드로 변하지 않도록 함.
                     # 보이는 애들에 한해 타깃 선정!
-                    ground_enemy_units = self.cached_known_enemy_units.filter(lambda u: u.is_visible and not u.is_flying)
+                    ground_enemy_units = self.known_enemy_units.filter(lambda u: u.is_visible and not u.is_flying)
 
                     # 아래 코드는 모드 상관없이 작동
                     # 랜딩을 마쳤으므로 랜딩 준비 flag를 다시 False로 되돌림
@@ -1111,7 +1112,7 @@ class Bot(sc2.BotAI):
                         # 기계가 없으면 기타 나머지 중 가까운 놈부터
                         # 2. 적 커맨드
                         def target_func(unit):
-                            ground_units = self.cached_known_enemy_units.not_flying.filter(
+                            ground_units = self.known_enemy_units.not_flying.filter(
                                 lambda e: e.is_visible)
 
                             if not ground_units.empty:
@@ -1140,7 +1141,7 @@ class Bot(sc2.BotAI):
                             self.evoked[(unit.tag, "REAPER_RUNAWAY")] = False
                     if not self.evoked.get((unit.tag, "REAPER_RUNAWAY"), False):
                         def target_func(unit):
-                            ground_units = self.cached_known_enemy_units.not_flying.filter(
+                            ground_units = self.known_enemy_units.not_flying.filter(
                                 lambda e: e.is_visible)
                             if not ground_units.empty:
                                 return ground_units.closest_to(unit)
@@ -1293,13 +1294,13 @@ class Bot(sc2.BotAI):
                     def target_func(unit):
                         # 우선순위 4가지
                         # 1.시즈탱크
-                        query_units = self.cached_known_enemy_units.filter(lambda
+                        query_units = self.known_enemy_units.filter(lambda
                                                                                u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED).sorted(
                             lambda u: u.health + unit.distance_to(u))
                         if not query_units.empty:
                             return query_units.first
                         # 2.토르
-                        query_units = self.cached_known_enemy_units.filter(
+                        query_units = self.known_enemy_units.filter(
                             lambda u: u.type_id is UnitTypeId.THOR or u.type_id is UnitTypeId.THORAP).sorted(
                             lambda u: u.health + unit.distance_to(u))
                         if not query_units.empty:
@@ -1325,7 +1326,7 @@ class Bot(sc2.BotAI):
 
                 # 아래 내용은 공격 정책이거나 offense mode가 아닐 시에도 항시 적용됨
                 threats = self.select_threat(unit)
-                # clock_threats = self.cached_known_enemy_units.filter(
+                # clock_threats = self.known_enemy_units.filter(
                 #     lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
 
                 # 근처에 위협이 존재할 시 클라킹
@@ -1347,14 +1348,14 @@ class Bot(sc2.BotAI):
                 if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
 
                     def target_func(unit):
-                        enemy_tanks = self.cached_known_enemy_units.filter(
+                        enemy_tanks = self.known_enemy_units.filter(
                             lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
                         if enemy_tanks.amount > 0:
                             target = enemy_tanks.closest_to(unit.position)
                             return target
                         # 만약 탱크가 없다면 HP가 가장 적으면서 가까운 아무 지상 유닛이나, 그것도 없다면 커맨드 직행
                         else:
-                            targets = self.cached_known_enemy_units.filter(lambda u: u.type_id is not UnitTypeId.COMMANDCENTER and not u.is_flying)
+                            targets = self.known_enemy_units.filter(lambda u: u.type_id is not UnitTypeId.COMMANDCENTER and not u.is_flying)
                             max_dist = math.sqrt(self.map_height**2 + self.map_width**2)
                             if not targets.empty:
                                 target = targets.sorted(lambda u: u.health_percentage + unit.distance_to(u)/max_dist)[0]

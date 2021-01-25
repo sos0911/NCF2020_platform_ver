@@ -139,24 +139,29 @@ class Bot(sc2.BotAI):
 
         return threats
 
+        # 유닛 그룹 정하기
+        # 시즈탱크 제외하고 산정.
+        # 그룹당 중복 가능..
+
     def unit_groups(self):
         groups = []
         center_candidates = self.units.not_structure.filter(
-            lambda u: u.type_id is not UnitTypeId.SIEGETANKSIEGED and u.type_id is not UnitTypeId.SIEGETANK)
+            lambda
+                u: u.type_id is not UnitTypeId.SIEGETANKSIEGED and u.type_id is not UnitTypeId.SIEGETANK and u.type_id is not UnitTypeId.VIKINGFIGHTER)
         for unit in center_candidates:
             group = center_candidates.closer_than(5, unit)
             groups.append(group)
 
         groups.sort(key=lambda g: g.amount, reverse=True)
-        my_groups = []
+        ret_groups = []
 
-        # groups가 비는 경우는 시즈탱크 제외 유닛이 아예 없다는 것
-        # 이 경우 빈 list 반환
+        # groups가 비는 경우는 위에서 제외한 유닛을 제외하고 유닛이 아예 없다는 것
+        # 이 경우 아군 커맨드가 그룹 센터가 되게끔 반환
         if not groups:
-            return my_groups
+            return [self.units.structure]
 
         # groups가 비지 않는 경우
-        my_groups.append(groups[0])
+        ret_groups.append(groups[0])
         selected_units = groups[0]
 
         group_num = int(self.units.not_structure.amount / 10.0)
@@ -164,13 +169,17 @@ class Bot(sc2.BotAI):
         for i in range(0, group_num):
             groups.sort(key=lambda g: (g - selected_units).amount, reverse=True)
             # groups.sorted(lambda g : g.filter(lambda u : not (u in selected_units)), reverse=True)
-            my_groups.append(groups[0])
+            ret_groups.append(groups[0])
             selected_units = selected_units or groups[0]
 
-        return my_groups
+        return ret_groups
 
     async def on_step(self, iteration: int):       
         actions = list()
+
+        # 아군 그룹 정보 갱신
+        if not self.units.not_structure.empty:
+            self.my_groups = self.unit_groups()
 
         if not self.units.not_structure.empty:
             my_groups = self.unit_groups()
@@ -378,7 +387,7 @@ class Bot(sc2.BotAI):
                             lambda u: unit.sight_range > unit.distance_to(u))
                         # 일정 시간 이상(1초)적 공중 유닛이 보이지 않고 그룹 센터로부터 일정 범위 안(3)에 들어온다면 착륙
                         if not targets.empty and self.time - self.evoked.get("Last_enemy_aircraft_time", 0.0) >= 1.0\
-                                and unit.distance_to(self.units.not_structure.center) < 3.0:
+                                and unit.distance_to(self.my_groups[0].center) < 3.0:
 
                             # 랜딩 준비 단계가 아니면 준비 단계로 만든다.
                             if not self.evoked.get((unit.tag, "prepare_landing")):
@@ -394,7 +403,7 @@ class Bot(sc2.BotAI):
                                 dist_y = math.sqrt(dist ** 2 - dist_x ** 2)\
                                     if random.randint(0,1) == 0 else -math.sqrt(dist ** 2 - dist_x ** 2)
                                 desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
-                                desired_pos = self.units.not_structure.center + desire_add_vector
+                                desired_pos = self.my_groups[0].center + desire_add_vector
                                 landing_loc = Point2((self.clamp(desired_pos.x, 0, self.map_width),
                                                         self.clamp(desired_pos.y, 0, self.map_height)))
                                 self.evoked[(unit.tag, "landing_loc")] = landing_loc
@@ -405,7 +414,7 @@ class Bot(sc2.BotAI):
                             # 타깃이 아예 없거나 있지만 일정 시간이 경과x or 그룹 센터간 거리가 아직 있음
                             # 지상유닛 타깃이 있고 랜딩 준비중일때 그룹 센터에서 대기하기 위한 코드
                             if not targets.empty and self.evoked.get((unit.tag, "prepare_landing")):
-                                actions.append(unit.move(self.units.not_structure.center))
+                                actions.append(unit.move(self.my_groups[0].center))
                             # 랜딩 준비중이 아니면 적 커맨드로 공격
                             elif targets.empty:
                                 actions.append(unit.attack(self.enemy_cc))
