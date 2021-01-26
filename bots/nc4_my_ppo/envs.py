@@ -22,13 +22,14 @@ from termcolor import cprint
 import numpy as np
 from IPython import embed
 
-from ..nc3_simple3.bot import Bot as OppBot
+#from ..nc3_simple3.bot import Bot as OppBot
 from ..nc4_simple_ppo.bot import Bot as Opp2Bot
 from ..nc1_simple_tank.bot import Bot as OppBotTank
 from ..nc1_simple_battle.bot import Bot as OppBotBattle
 from ..nc1_simple_battle_no_raven.bot import Bot as OppBotBattleNoRaven
 from ..nc1_simple_banshee.bot import Bot as OppBotBanshee
 from ..nc1_simple_flash.bot import Bot as OppBotFlash
+from ..nc1_simple_magic.bot import Bot as OppBotMagic
 
 from .bot import Bot as MyBot
 from .consts import CommandType
@@ -322,8 +323,8 @@ class Actor:
                     # pool
                     # set으로 중복 방지
                     # pool은 oppbot, opp2bot + 동일 (배틀,밤까) 봇 2개 + 동일 배틀 봇 2개 + 동일 탱크 봇 2개 + 동일 밴시 봇 2개 + 동일 타 팀 봇 2개 + pool 4개 = max 16개의 봇으로 구성
-                    pool = set(["OppBot", "Opp2Bot", "OppBotBattle", "OppBotBattle", "OppBotBattleNoRaven", "OppBotBattleNoRaven", \
-                                "OppBotTank", "OppBotTank", "OppBotBanshee", "OppBotBanshee", "OppBotFlash", "OppBotFlash"])
+                    pool = set(["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
+                                "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlash", "OppBotMagic", "OppBotMagic"])
                     for i in range(1, 5):
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
                         if os.path.isfile(model_path):
@@ -332,9 +333,7 @@ class Actor:
                     players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock))
 
                     bot_str = sample(pool, 1)[0]
-                    if bot_str == "OppBot" :
-                        players[1] = _Bot(Race.Terran, OppBot())
-                    elif bot_str == "Opp2Bot" :
+                    if bot_str == "Opp2Bot" :
                         players[1] = _Bot(Race.Terran, Opp2Bot())
                     elif bot_str == "OppBotBattle" :
                         players[1] = _Bot(Race.Terran, OppBotBattle())
@@ -345,6 +344,8 @@ class Actor:
                     elif bot_str == "OppBotBanshee" :
                         players[1] = _Bot(Race.Terran, OppBotBanshee())
                     elif bot_str == "OppBotFlash" :
+                        players[1] = _Bot(Race.Terran, OppBotFlash())
+                    elif bot_str == "OppBotMagic" :
                         players[1] = _Bot(Race.Terran, OppBotFlash())
                     else :
                         players[1] = _Bot(Race.Terran, MyBot(step_interval, hostname, None, bot_str))
@@ -363,6 +364,10 @@ class Actor:
                         players[0], client, realtime, portconfig, 
                         step_time_limit, game_time_limit, rgb_render_config
                     )
+
+                    # Result.Defeat, Result.Tie, Result.Victory
+                    # print(result)
+
                     if save_replay_as is not None:
                         await client.save_replay(save_replay_as)
                     await client.leave()  

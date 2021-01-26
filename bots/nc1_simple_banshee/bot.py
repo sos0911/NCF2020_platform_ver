@@ -44,6 +44,9 @@ class Bot(sc2.BotAI):
         self.train_raven = False
         self.attacking = False
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first
+        self.tmp_attacking = False
+
+        self.my_groups = []
 
         # (32.5, 31.5) or (95.5, 31.5)
         if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0:
@@ -71,8 +74,14 @@ class Bot(sc2.BotAI):
             total_move_vector = Point2((0, 0))
             showing_only_enemy_units = self.known_enemy_units.not_structure.filter(lambda e: e.is_visible)
 
-            # 자신이 클라킹 상태가 아닐 때나 클라킹 상태이지만 발각됬을 때
-            if not unit.is_cloaked or unit.is_revealed:
+            is_revealed = False
+            enemy_ravens = self.known_enemy_units(UnitTypeId.RAVEN)
+            for e_raven in enemy_ravens :
+                if unit.distance_to(e_raven) <= e_raven.detect_range :
+                    is_revealed = True
+                    break
+
+            if not unit.is_cloaked or is_revealed:
                 if not unit.is_flying:
                     # 배틀크루저 예외처리.
                     # 배틀은 can_attack_air/ground와 무기 범위가 다 false, 0이다.
@@ -173,7 +182,7 @@ class Bot(sc2.BotAI):
         actions = list()
 
         if not self.units.not_structure.empty:
-            my_groups = self.unit_groups()
+            self.my_groups = self.unit_groups()
         #
         # 빌드 오더 생성
         #
@@ -190,12 +199,12 @@ class Bot(sc2.BotAI):
             elif self.time - self.evoked['ready_time'] >= 6.0 : 
                 self.evoked['go'] = True
                 self.attacking = True
-        elif self.known_enemy_units.not_structure.exists :
-            for unit in self.units :
-                if(self.known_enemy_units.not_structure.filter(lambda e : e.is_visible).in_attack_range_of(unit).exists) :
-                    self.attacking = True
-                    break
-                self.attacking = False
+        #elif self.known_enemy_units.not_structure.exists :
+        #    for unit in self.units :
+        #        if(self.known_enemy_units.not_structure.filter(lambda e : e.is_visible).in_attack_range_of(unit).exists) :
+        #            self.attacking = True
+        #            break
+        #        self.attacking = False
         else :
             self.attacking = False
         
@@ -231,6 +240,28 @@ class Bot(sc2.BotAI):
             del self.build_order[0]  # 빌드오더에서 첫 번째 유닛 제거
             self.evoked[(self.cc.tag, 'train')] = self.time
 
+        desired_MULE_cnt = 0
+        if self.cc.health_percentage <= 0.3:
+            desired_MULE_cnt = 3
+        elif self.cc.health_percentage <= 0.5:
+            desired_MULE_cnt = 2
+        elif self.cc.health_percentage <= 0.7:
+            desired_MULE_cnt = 1
+
+        our_MULE_cnt = self.units.filter(lambda u: u.type_id is UnitTypeId.MULE).amount
+
+        if desired_MULE_cnt > 0 and our_MULE_cnt < desired_MULE_cnt:
+            for i in range(desired_MULE_cnt - our_MULE_cnt):
+                if await self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE, only_check_energy_and_cooldown=True):
+                    if self.cc.position.x < 50:
+                        mule_summon_point = Point2((self.cc.position.x - 5, self.cc.position.y))
+                    else:
+                        mule_summon_point = Point2((self.cc.position.x + 5, self.cc.position.y))
+                        # 정해진 곳에 MULE 소환
+                    actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
+                else:
+                    break
+
         closest_dist = 500
 
         if not self.known_enemy_units.filter(lambda e: e.is_visible).empty:
@@ -250,22 +281,36 @@ class Bot(sc2.BotAI):
             else:
                 target = self.enemy_cc
 
-            if not unit.type_id in [UnitTypeId.RAVEN, UnitTypeId.MULE, UnitTypeId.SIEGETANK, UnitTypeId.SIEGETANKSIEGED]:
+            if not unit.type_id in [UnitTypeId.RAVEN, UnitTypeId.MULE, UnitTypeId.BANSHEE]:
+                #if unit.type_id is UnitTypeId.RAVEN:
+                #    pass
+                #    #print("check")
+                is_attacked = False
+                visible_enemy = self.known_enemy_units.not_structure.filter(lambda e : e.is_visible)
+                for e in visible_enemy :
+                    if e.target_in_range(unit) :
+                        is_attacked = True
+                        break
 
-                if self.attacking == False and closest_dist > 7.0:
+                if self.attacking == False and (closest_dist > 7.0 and not is_attacked):
+                    self.tmp_attacking = False
                     actions.append(unit.attack(self.rally_point))
                 else:
-                    actions.append(unit.attack(target))
+                    self.tmp_attacking = True
+                    #actions.append(unit.attack(target))
 
             if unit.type_id is UnitTypeId.MARINE :
-                if unit.distance_to(target) < 15 and self.attacking == True and self.known_enemy_units.amount >= 3 :
-                    # 해병과 목표의 거리가 15이하일 경우 스팀팩 사용
-                    if not unit.has_buff(BuffId.STIMPACK) and unit.health_percentage > 0.5:
-                        # 현재 스팀팩 사용중이 아니며, 체력이 50% 이상
-                        if self.time - self.evoked.get((unit.tag, AbilityId.EFFECT_STIM), 0) > 1.0:
-                            # 1초 이전에 스팀팩을 사용한 적이 없음
-                            actions.append(unit(AbilityId.EFFECT_STIM))
-                            self.evoked[(unit.tag, AbilityId.EFFECT_STIM)] = self.time
+                if (self.attacking == True or self.tmp_attacking) :
+                    actions.append(unit.attack(target))
+                    if unit.distance_to(target) < 15 and self.known_enemy_units.amount >= 3:
+                        # 해병과 목표의 거리가 15이하일 경우 스팀팩 사용
+                        if not unit.has_buff(BuffId.STIMPACK) and unit.health_percentage > 0.5:
+                            # 현재 스팀팩 사용중이 아니며, 체력이 50% 이상
+                            if self.time - self.evoked.get((unit.tag, AbilityId.EFFECT_STIM), 0) > 1.0:
+                                # 1초 이전에 스팀팩을 사용한 적이 없음
+                                actions.append(unit(AbilityId.EFFECT_STIM))
+                                self.evoked[(unit.tag, AbilityId.EFFECT_STIM)] = self.time
+                
 
             # 밴시
             # 공성전차를 위주로 잡게 한다.
@@ -293,7 +338,7 @@ class Bot(sc2.BotAI):
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
 
                 # attacking 시에
-                if self.attacking:
+                if (self.attacking == True or self.tmp_attacking):
 
                     def target_func(unit):
                         enemy_tanks = self.known_enemy_units.filter(
@@ -321,51 +366,49 @@ class Bot(sc2.BotAI):
 
             # RAVEN
             if unit.type_id is UnitTypeId.RAVEN:
+                #print("RAVEN")
 
-                if not enemy_banshees.empty:
-                    actions.append(unit.move(enemy_banshees.closest_to(unit)))
+                if unit.distance_to(target) < 15 and unit.energy > 75 and (self.attacking == True or self.tmp_attacking):  # 적들이 근처에 있고 마나도 있으면
+                    known_only_enemy_units = self.known_enemy_units.not_structure
+                    if known_only_enemy_units.exists:  # 보이는 적이 있다면
+                        enemy_amount = known_only_enemy_units.amount
+                        not_antiarmor_enemy = known_only_enemy_units.filter(
+                            # anitarmor가 아니면서 가능대상에서 1초가 지났을 때...
+                            lambda unit: self.time - self.evoked.get((unit.tag, "ANTIARMOR_POSSIBLE"), 0) >= 1.0
+                            # (not unit.has_buff(BuffId.RAVENSHREDDERMISSILEARMORREDUCTION)) and
+                        )
+                        not_antiarmor_enemy_amount = not_antiarmor_enemy.amount
 
-                if self.attacking == True:  # 공격중
-                    if unit.distance_to(target) < 15 and unit.energy > 75:  # 적들이 근처에 있고 마나도 있으면
-                        known_only_enemy_units = self.known_enemy_units.not_structure
-                        if known_only_enemy_units.exists:  # 보이는 적이 있다면
-                            enemy_amount = known_only_enemy_units.amount
-                            not_antiarmor_enemy = known_only_enemy_units.filter(
-                                # anitarmor가 아니면서 가능대상에서 1초가 지났을 때...
-                                lambda unit: self.time - self.evoked.get((unit.tag, "ANTIARMOR_POSSIBLE"),
-                                                                         0) >= 1.0
-                                # (not unit.has_buff(BuffId.RAVENSHREDDERMISSILEARMORREDUCTION)) and
-                            )
-                            not_antiarmor_enemy_amount = not_antiarmor_enemy.amount
+                        if not_antiarmor_enemy_amount / enemy_amount > 0.5:  # 안티아머 걸리지 않은게 절반 이상이면 미사일 쏘기 center에
+                            enemy_center = not_antiarmor_enemy.center
+                            select_unit = not_antiarmor_enemy.closest_to(enemy_center)
+                            possible_units = known_only_enemy_units.closer_than(3, select_unit)  # 안티아머 걸릴 수 있는 애들
 
-                            if not_antiarmor_enemy_amount / enemy_amount > 0.5:  # 안티아머 걸리지 않은게 절반 이상이면 미사일 쏘기 center에
-                                enemy_center = not_antiarmor_enemy.center
-                                select_unit = not_antiarmor_enemy.closest_to(enemy_center)
-                                possible_units = known_only_enemy_units.closer_than(3,
-                                                                                    select_unit)  # 안티아머 걸릴 수 있는 애들
-
-                                for punit in possible_units:
-                                    self.evoked[(punit.tag, "ANTIARMOR_POSSIBLE")] = self.time
+                            for punit in possible_units:
                                 self.evoked[(punit.tag, "ANTIARMOR_POSSIBLE")] = self.time
+                            self.evoked[(punit.tag, "ANTIARMOR_POSSIBLE")] = self.time
 
-                                actions.append(unit(AbilityId.EFFECT_ANTIARMORMISSILE, select_unit))
+                            actions.append(unit(AbilityId.EFFECT_ANTIARMORMISSILE, select_unit))
 
-                            else:  # 안티아머가 있으면 매트릭스 걸 놈 추적
-                                for enemy in known_only_enemy_units:
-                                    if enemy.is_mechanical and enemy.has_buff(
-                                            BuffId.RAVENSCRAMBLERMISSILE):  # 기계이고 락다운 안걸려있으면 (robotic은 로봇)
-                                        actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
-                        # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
-                    else:  # 적들이 없거나 마나가 없으면
-                        if enemy_banshees.empty and self.units.not_structure.exists:  # 전투그룹 중앙 조금 뒤 대기
-                            if self.cc.position.x < 50:
-                                actions.append(
-                                    unit.move(Point2((self.units.center.x - 5, self.units.center.y))))
-                            else:
-                                actions.append(
-                                    unit.move(Point2((self.units.center.x + 5, self.units.center.y))))
-                elif enemy_banshees.empty:  # 방어모드
-                    actions.append(unit.move(self.cc))
+                        else:  # 안티아머가 있으면 매트릭스 걸 놈 추적
+                            for enemy in known_only_enemy_units:
+                                if enemy.is_mechanical and enemy.has_buff(
+                                        BuffId.RAVENSCRAMBLERMISSILE):  # 기계이고 락다운 안걸려있으면 (robotic은 로봇)
+                                    actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
+                    # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
+                else :
+                    enemy_banshee = self.known_enemy_units(UnitTypeId.BANSHEE)
+                    
+                    if enemy_banshee.exists :
+                        banshee_in_raven = enemy_banshee.closer_than(9.5, unit)
+                        #print(banshee_in_raven)
+                        if banshee_in_raven.amount / enemy_banshee.amount >= 0.5 :
+                            actions.append(unit.move(self.cc))
+                        else :
+                            #print("???")
+                            actions.append(unit.move(enemy_banshee.closest_to(unit).position))
+                    elif self.units.not_structure.exists:  # 전투그룹 중앙 대기
+                        actions.append(unit.move(self.my_groups[0].center))
 
             # 지게로봇
             # 에너지 50을 사용하여 소환

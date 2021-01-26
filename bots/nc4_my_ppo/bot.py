@@ -443,18 +443,25 @@ class Bot(sc2.BotAI):
             showing_only_enemy_units = self.known_enemy_units.not_structure.filter(lambda e: e.is_visible)
 
             # 자신이 클라킹 상태가 아닐 때나 클라킹 상태이지만 발각됬을 때
-            if not unit.is_cloaked or unit.is_revealed:
+            is_revealed = False
+            enemy_ravens = self.known_enemy_units(UnitTypeId.RAVEN)
+            for e_raven in enemy_ravens :
+                if unit.distance_to(e_raven) <= e_raven.detect_range :
+                    is_revealed = True
+                    break
+
+            if not unit.is_cloaked or is_revealed:
                 if not unit.is_flying:
                     # 배틀크루저 예외처리.
                     # 배틀은 can_attack_air/ground와 무기 범위가 다 false, 0이다.
-                    threats = showing_only_enemy_units.filter(lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                    threats = showing_only_enemy_units.filter(lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(u)) or (
                             u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u))))
                     for eunit in threats:
                         if eunit.type_id is UnitTypeId.BATTLECRUISER:
                             maxrange = max(maxrange, 6)
                             move_vector = unit.position - eunit.position
                             move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                            move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
+                            move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
                             total_move_vector += move_vector
                         else:
                             maxrange = max(maxrange, eunit.ground_range)
@@ -464,14 +471,14 @@ class Bot(sc2.BotAI):
                             total_move_vector += move_vector
                 else:
                     threats = showing_only_enemy_units.filter(
-                        lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
+                        lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(u)) or (
                                 u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))))
                     for eunit in threats:
                         if eunit.type_id is UnitTypeId.BATTLECRUISER:
                             maxrange = max(maxrange, 6)
                             move_vector = unit.position - eunit.position
                             move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                            move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
+                            move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
                             total_move_vector += move_vector
                         else:
                             maxrange = max(maxrange, eunit.air_range)
@@ -630,12 +637,10 @@ class Bot(sc2.BotAI):
                             yamato_enemy_range = 15
 
                             # 근처 밤까마귀가 있다면 야마토 포 우선순위 변경
-                            yamato_candidate_id = [UnitTypeId.THORAP, UnitTypeId.THOR, UnitTypeId.BATTLECRUISER,
+                            yamato_candidate_id = [UnitTypeId.THORAP, UnitTypeId.THOR, UnitTypeId.BATTLECRUISER, \
+                                                   UnitTypeId.RAVEN, UnitTypeId.VIKINGFIGHTER, UnitTypeId.BANSHEE,
                                                    UnitTypeId.SIEGETANKSIEGED,
-                                                   UnitTypeId.SIEGETANK, UnitTypeId.RAVEN] if self.first_enemy_Raven is None else \
-                                [UnitTypeId.RAVEN, UnitTypeId.THORAP, UnitTypeId.THOR, UnitTypeId.BATTLECRUISER,
-                                 UnitTypeId.SIEGETANKSIEGED,
-                                 UnitTypeId.SIEGETANK]
+                                                   UnitTypeId.SIEGETANK,]
 
                             for eunit_id in yamato_candidate_id:
                                 target_candidate = self.known_enemy_units.filter(
@@ -644,15 +649,7 @@ class Bot(sc2.BotAI):
                                 if not target_candidate.empty:
                                     return target_candidate.first
 
-                            # 위 리스트 안 개체들이 없다면 나머지 중 타겟팅
-                            # 나머지 유닛도 없다면 적 커맨드로 ㄱㄱ
-                            enemy_left = self.known_enemy_units.filter(
-                                lambda u: unit.distance_to(u) <= yamato_enemy_range)
-                            enemy_left.sorted(lambda u: u.health, reverse=True)
-                            if not enemy_left.empty:
-                                return enemy_left.first
-                            else:
-                                return self.enemy_cc
+                            return self.enemy_cc
 
                         # 토르, 밤까마귀, 배틀 같은 성가시거나 피통 많은 애들을 조지는 데 야마토 포 사용
                         # 얘네가 없으면 아껴 놓다가 커맨드에 사용.
@@ -663,6 +660,9 @@ class Bot(sc2.BotAI):
                                 # 커맨드 unit을 가리키게 변경
                                 if not self.known_enemy_units(UnitTypeId.COMMANDCENTER).empty:
                                     yamato_target = self.known_enemy_units(UnitTypeId.COMMANDCENTER).first
+                                else :
+                                    actions = self.moving_shot(actions, unit, 1, target_func, 0.3)
+                                    continue
                             if unit.distance_to(yamato_target) >= 12:
                                 actions = self.moving_shot(actions, unit, 1, yamato_target_func, 0.3)
                             else:
@@ -1044,7 +1044,7 @@ class Bot(sc2.BotAI):
                                 target = first_targets.closest_to(unit)
                                 return target
 
-                            actions = self.moving_shot(actions, unit, 15, target_func)
+                            actions = self.moving_shot(actions, unit, 1, target_func)
 
                         # 우선순위 2
                         else:
@@ -1053,38 +1053,38 @@ class Bot(sc2.BotAI):
                             targets = self.known_enemy_units.filter(
                                 lambda u: unit.sight_range > unit.distance_to(u))
                             # 일정 시간 이상(1초)적 공중 유닛이 보이지 않고 그룹 센터로부터 일정 범위 안(3)에 들어온다면 착륙
-                            if not targets.empty and self.time - self.evoked.get("Last_enemy_aircraft_time", 0.0) >= 1.0\
-                                    and unit.distance_to(self.my_groups[0].center) < 3.0:
-
+                            if not targets.empty :
                                 # 랜딩 준비 단계가 아니면 준비 단계로 만든다.
                                 if not self.evoked.get((unit.tag, "prepare_landing")):
                                     self.evoked[(unit.tag, "prepare_landing")] = True
 
-                                landing_loc = self.evoked.get((unit.tag, "landing_loc"), None)
-                                if landing_loc is None or not await \
-                                        self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc):
-                                    # loc = await self.find_placement(building=AbilityId.MORPH_VIKINGASSAULTMODE, near=self.my_groups[0].center,
-                                    #                             max_distance=20)
-                                    dist = random.randint(4, 6)
-                                    dist_x = random.randint(3, dist)
-                                    dist_y = math.sqrt(dist ** 2 - dist_x ** 2)\
-                                        if random.randint(0,1) == 0 else -math.sqrt(dist ** 2 - dist_x ** 2)
-                                    desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
-                                    desired_pos = self.my_groups[0].center + desire_add_vector
-                                    landing_loc = Point2((self.clamp(desired_pos.x, 0, self.map_width),
-                                                          self.clamp(desired_pos.y, 0, self.map_height)))
-                                    self.evoked[(unit.tag, "landing_loc")] = landing_loc
-                                actions.append(unit.move(landing_loc))
-                                if unit.distance_to(landing_loc) < 5.0:
-                                    actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
-                            else:
-                                # 타깃이 아예 없거나 있지만 일정 시간이 경과x or 그룹 센터간 거리가 아직 있음
-                                # 지상유닛 타깃이 있고 랜딩 준비중일때 그룹 센터에서 대기하기 위한 코드
-                                if not targets.empty and self.evoked.get((unit.tag, "prepare_landing")):
-                                    actions.append(unit.move(self.my_groups[0].center))
-                                # 랜딩 준비중이 아니면 적 커맨드로 공격
-                                elif targets.empty:
-                                    actions.append(unit.attack(self.enemy_cc))
+                                if self.time - self.evoked.get("Last_enemy_aircraft_time", 0.0) >= 1.0\
+                                    and unit.distance_to(self.my_groups[0].center) < 3.0:
+
+                                    landing_loc = self.evoked.get((unit.tag, "landing_loc"), None)
+                                    if landing_loc is None or not await \
+                                            self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc):
+                                        # loc = await self.find_placement(building=AbilityId.MORPH_VIKINGASSAULTMODE, near=self.my_groups[0].center,
+                                        #                             max_distance=20)
+                                        dist = random.randint(4, 6)
+                                        dist_x = random.randint(3, dist)
+                                        dist_y = math.sqrt(dist ** 2 - dist_x ** 2)\
+                                            if random.randint(0,1) == 0 else -math.sqrt(dist ** 2 - dist_x ** 2)
+                                        desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
+                                        desired_pos = self.my_groups[0].center + desire_add_vector
+                                        landing_loc = Point2((self.clamp(desired_pos.x, 0, self.map_width),
+                                                            self.clamp(desired_pos.y, 0, self.map_height)))
+                                        self.evoked[(unit.tag, "landing_loc")] = landing_loc
+                                    actions.append(unit.move(landing_loc))
+                                    if unit.distance_to(landing_loc) < 5.0:
+                                        actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
+                                else:
+                                    # 타깃이 아예 없거나 있지만 일정 시간이 경과x or 그룹 센터간 거리가 아직 있음
+                                    # 지상유닛 타깃이 있고 랜딩 준비중일때 그룹 센터에서 대기하기 위한 코드
+                                    #if not targets.empty and self.evoked.get((unit.tag, "prepare_landing")):
+                                    actions.append(unit.attack(self.my_groups[0].center))
+                            else :
+                                actions.append(unit.attack(self.enemy_cc))
 
 
                 # 바이킹 전투 모드(지상)
@@ -1206,7 +1206,7 @@ class Bot(sc2.BotAI):
                         if banshee_in_raven.amount / enemy_banshee.amount >= 0.5 :
                             actions.append(unit.move(self.cc))
                         else :
-                            actions.append(unit.move(enemy_banshee.closest_to(unit)))
+                            actions.append(unit.move(enemy_banshee.closest_to(unit).position))
                     elif self.units.not_structure.exists:  # 전투그룹 중앙 대기
                         actions.append(unit.move(self.my_groups[0].center))
 
