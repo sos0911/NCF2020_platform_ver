@@ -322,7 +322,7 @@ class Actor:
                     
                     # pool
                     # set으로 중복 방지
-                    # pool은 oppbot, opp2bot + 동일 (배틀,밤까) 봇 2개 + 동일 배틀 봇 2개 + 동일 탱크 봇 2개 + 동일 밴시 봇 2개 + 동일 타 팀 봇 2개 + pool 4개 = max 16개의 봇으로 구성
+                    # pool은 opp2bot + (배틀,밤까) 봇 1개 + 배틀 봇 1개 + 탱크 봇 1개 + 밴시 봇 1개 + 타 팀 봇(flash/magic) 4개 + pool 4개 = max 13개의 봇으로 구성
                     pool = set(["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
                                 "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlash", "OppBotMagic", "OppBotMagic"])
                     for i in range(1, 5):
@@ -346,7 +346,7 @@ class Actor:
                     elif bot_str == "OppBotFlash" :
                         players[1] = _Bot(Race.Terran, OppBotFlash())
                     elif bot_str == "OppBotMagic" :
-                        players[1] = _Bot(Race.Terran, OppBotFlash())
+                        players[1] = _Bot(Race.Terran, OppBotMagic())
                     else :
                         players[1] = _Bot(Race.Terran, MyBot(step_interval, hostname, None, bot_str))
 
