@@ -136,10 +136,13 @@ class Bot(sc2.BotAI):
         #        self.attacking = False
         else :
             self.attacking = False
-        
+
+        self.train_raven = False
         for enemy in self.known_enemy_units :
             if enemy.type_id is UnitTypeId.BANSHEE :
                 self.train_raven = True
+                break
+
 
         if self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0: 
             if self.train_raven and self.vespene > 175 and not UnitTypeId.RAVEN in self.build_order and self.units(UnitTypeId.RAVEN).empty: # 상대한테 벤시가 있고 베스핀 175 이상이고 레이븐을 추가한 상태가 아니고 레이븐이 없어야함

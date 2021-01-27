@@ -331,7 +331,8 @@ class Bot(sc2.BotAI):
 
         update_flag = False
 
-        if self.known_enemy_units.exists :
+        if self.known_enemy_units.not_structure.exists and not (self.known_enemy_units.not_structure.amount == 1 and \
+                                                               self.known_enemy_units.not_structure.first.type_id is UnitTypeId.MARINE):
             update_flag = True
 
         if update_flag or self.next_unit is None :
@@ -429,7 +430,8 @@ class Bot(sc2.BotAI):
 
     # 무빙샷
     def moving_shot(self, actions, unit, cooldown, target_func, margin_health: float = 0, minimum: float = 0):
-        # print("WEAPON COOLDOWN : ", unit.weapon_cooldown)
+        if unit.type_id is UnitTypeId.MARAUDER:
+            print("WEAPON COOLDOWN : ", unit.weapon_cooldown)
         if unit.weapon_cooldown < cooldown:
             target = target_func(unit)
             if self.time - self.evoked.get((unit.tag, "COOLDOWN"), 0.0) >= minimum:
@@ -604,7 +606,10 @@ class Bot(sc2.BotAI):
                                 # return enemies.closest_to(unit)
                             return self.enemy_cc
 
-                        actions = self.moving_shot(actions, unit, 3, target_func, 0.5)
+                        if unit.has_buff(BuffId.STIMPACK):
+                            actions = self.moving_shot(actions, unit, 1, target_func, 0.5)
+                        else:
+                            actions = self.moving_shot(actions, unit, 3, target_func, 0.5)
 
                 ## BATTLECRUISER ##
                 if unit.type_id is UnitTypeId.BATTLECRUISER:
@@ -648,6 +653,7 @@ class Bot(sc2.BotAI):
                                 target_candidate.sorted(lambda u: u.health, reverse=True)
                                 if not target_candidate.empty:
                                     return target_candidate.first
+
 
                             return self.enemy_cc
 
@@ -1033,7 +1039,7 @@ class Bot(sc2.BotAI):
                             self.evoked[(unit.tag, "prepare_landing")] = False
                         # 우선순위 1
                         # 눈에 보이는(visible) 공중 유닛 대상
-                        first_targets = self.known_enemy_units.filter(lambda e: e.is_flying and e.is_visible)
+                        first_targets = self.known_enemy_units.filter(lambda e: e.is_flying and e.can_be_attacked)
                         if not first_targets.empty:
 
                             self.evoked["Last_enemy_aircraft_time"] = self.time
@@ -1048,10 +1054,13 @@ class Bot(sc2.BotAI):
 
                         # 우선순위 2
                         else:
+                            # 이 경우 바이킹 그룹 말고 다른 아군 유닛이 있는가가 굉장히 중요함!
+                            # 있으면 통상 메뉴얼대로, 없으면 가급적이면 아군 커맨드로 대피.
                             # 적 공중 유닛이 1초 이상 보이지 않는 경우에만 해당
                             # 유닛 그룹 중앙에서 내려서 싸울 것.
                             targets = self.known_enemy_units.filter(
                                 lambda u: unit.sight_range > unit.distance_to(u))
+                            our_other_units = self.units.not_structure - self.units({UnitTypeId.VIKINGFIGHTER, UnitTypeId.VIKINGASSAULT})
                             # 일정 시간 이상(1초)적 공중 유닛이 보이지 않고 그룹 센터로부터 일정 범위 안(3)에 들어온다면 착륙
                             if not targets.empty :
                                 # 랜딩 준비 단계가 아니면 준비 단계로 만든다.
@@ -1083,18 +1092,21 @@ class Bot(sc2.BotAI):
                                     # 지상유닛 타깃이 있고 랜딩 준비중일때 그룹 센터에서 대기하기 위한 코드
                                     #if not targets.empty and self.evoked.get((unit.tag, "prepare_landing")):
                                     actions.append(unit.attack(self.my_groups[0].center))
-                            else :
-                                actions.append(unit.attack(self.enemy_cc))
+                            else:
+                                if our_other_units.empty:
+                                    actions.append(unit.move(self.cc.position))
+                                else:
+                                    actions.append(unit.attack(self.enemy_cc))
 
 
                 # 바이킹 전투 모드(지상)
                 # 공격 우선순위 : 공중유닛 > 사정거리 내 탱크 > 지상유닛 > 적 커맨드
                 if unit.type_id is UnitTypeId.VIKINGASSAULT:
 
-                    enemy_air = self.known_enemy_units.flying
+                    enemy_air = self.known_enemy_units.filter(lambda e: e.is_flying and e.can_be_attacked)
                     # 커맨드 때리는 동안은 공중모드로 변하지 않도록 함.
                     # 보이는 애들에 한해 타깃 선정!
-                    ground_enemy_units = self.known_enemy_units.filter(lambda u: u.is_visible and not u.is_flying)
+                    ground_enemy_units = self.known_enemy_units.filter(lambda u: not u.is_flying and u.can_be_attacked)
 
                     # 아래 코드는 모드 상관없이 작동
                     # 랜딩을 마쳤으므로 랜딩 준비 flag를 다시 False로 되돌림
@@ -1293,30 +1305,33 @@ class Bot(sc2.BotAI):
                     # 목표물을 찾아, 치고 빠지기 구현
                     def target_func(unit):
                         # 우선순위 4가지
-                        # 1.시즈탱크
+                        # 1. 시즈탱크
                         query_units = self.known_enemy_units.filter(lambda
                                                                                u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED).sorted(
                             lambda u: u.health + unit.distance_to(u))
                         if not query_units.empty:
                             return query_units.first
-                        # 2.토르
+                        # 2. 토르
                         query_units = self.known_enemy_units.filter(
                             lambda u: u.type_id is UnitTypeId.THOR or u.type_id is UnitTypeId.THORAP).sorted(
                             lambda u: u.health + unit.distance_to(u))
                         if not query_units.empty:
                             return query_units.first
-                        # 3.가까운거
-                        query_units = self.known_enemy_units.filter(lambda e: e.is_visible)
+                        # 3. 지상 유닛 중 가까운거
+                        query_units = self.known_enemy_units.not_structure.filter(lambda e: e.is_visible and not e.is_flying)
                         if not query_units.empty:
                             return query_units.closest_to(unit)
-                        # 4.커맨드
+                        # 4. 커맨드
                         # 이때는 None 리턴
                         return None
 
                     if target_func(unit) is None:
                         actions.append(unit.attack(self.enemy_cc))
                     else:
-                        actions = self.moving_shot(actions, unit, 3, target_func, 0.5)
+                        if unit.has_buff(BuffId.STIMPACK):
+                            actions = self.moving_shot(actions, unit, 3, target_func)
+                        else:
+                            actions = self.moving_shot(actions, unit, 6, target_func)
 
 
             # 밴시
@@ -1333,7 +1348,7 @@ class Bot(sc2.BotAI):
                 # 하지만 정찰 유닛(마린 1기)만 있을 시에는 클라킹을 하지 않는다.
                 # 이 경우는 하는 것이 손해!
                 if not threats.empty and not (threats.amount == 1 and threats.first.type_id == UnitTypeId.MARINE) and \
-                        not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3:
+                        not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.2:
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충

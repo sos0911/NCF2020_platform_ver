@@ -207,10 +207,12 @@ class Bot(sc2.BotAI):
         #        self.attacking = False
         else :
             self.attacking = False
-        
+
+        self.train_raven = False
         for enemy in self.known_enemy_units :
-            if enemy.type_id is UnitTypeId.BANSHEE :
+            if enemy.type_id is UnitTypeId.BANSHEE:
                 self.train_raven = True
+                break
 
         if self.time - self.evoked.get('create', 0) > 1.0 and self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0: 
             if self.train_raven and not UnitTypeId.RAVEN in self.build_order and self.units(UnitTypeId.RAVEN).empty: # 상대한테 벤시가 있고 베스핀 175 이상이고 레이븐을 추가한 상태가 아니고 레이븐이 없어야함
@@ -326,7 +328,7 @@ class Bot(sc2.BotAI):
                 # 하지만 정찰 유닛(마린 1기)만 있을 시에는 클라킹을 하지 않는다.
                 # 이 경우는 하는 것이 손해!
                 if not threats.empty and not (threats.amount == 1 and threats.first.type_id == UnitTypeId.MARINE) and \
-                        not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3:
+                        not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.2:
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충

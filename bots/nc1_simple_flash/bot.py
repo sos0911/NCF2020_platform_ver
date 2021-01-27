@@ -216,10 +216,13 @@ class Bot(sc2.BotAI):
         #        self.attacking = False
         else :
             self.attacking = False
-        
+
+        self.train_raven = False
         for enemy in self.known_enemy_units :
             if enemy.type_id is UnitTypeId.BANSHEE :
                 self.train_raven = True
+                break
+
         '''
         if self.time - self.evoked.get('create', 0) > 1.0 and self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0: 
             if self.train_raven and not UnitTypeId.RAVEN in self.build_order and self.units(UnitTypeId.RAVEN).empty: # 상대한테 벤시가 있고 베스핀 175 이상이고 레이븐을 추가한 상태가 아니고 레이븐이 없어야함
@@ -364,7 +367,7 @@ class Bot(sc2.BotAI):
                 # 하지만 정찰 유닛(마린 1기)만 있을 시에는 클라킹을 하지 않는다.
                 # 이 경우는 하는 것이 손해!
                 if not threats.empty and not (threats.amount == 1 and threats.first.type_id == UnitTypeId.MARINE) and \
-                        not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.3:
+                        not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.2:
                     actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
 
                 # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
@@ -416,7 +419,7 @@ class Bot(sc2.BotAI):
                         self.evoked[(unit.tag, "prepare_landing")] = False
                     # 우선순위 1
                     # 눈에 보이는(visible) 공중 유닛 대상
-                    first_targets = self.known_enemy_units.filter(lambda e: e.is_flying and e.is_visible)
+                    first_targets = self.known_enemy_units.filter(lambda e: e.is_flying and e.can_be_attacked)
                     if not first_targets.empty:
 
                         self.evoked["Last_enemy_aircraft_time"] = self.time
@@ -431,33 +434,38 @@ class Bot(sc2.BotAI):
 
                     # 우선순위 2
                     else:
-                        #print("else")
+                        # 이 경우 바이킹 그룹 말고 다른 아군 유닛이 있는가가 굉장히 중요함!
+                        # 있으면 통상 메뉴얼대로, 없으면 가급적이면 아군 커맨드로 대피.
                         # 적 공중 유닛이 1초 이상 보이지 않는 경우에만 해당
                         # 유닛 그룹 중앙에서 내려서 싸울 것.
                         targets = self.known_enemy_units.filter(
                             lambda u: unit.sight_range > unit.distance_to(u))
+                        our_other_units = self.units.not_structure - self.units(
+                            {UnitTypeId.VIKINGFIGHTER, UnitTypeId.VIKINGASSAULT})
                         # 일정 시간 이상(1초)적 공중 유닛이 보이지 않고 그룹 센터로부터 일정 범위 안(3)에 들어온다면 착륙
-                        if not targets.empty :
+                        if not targets.empty:
                             # 랜딩 준비 단계가 아니면 준비 단계로 만든다.
                             if not self.evoked.get((unit.tag, "prepare_landing")):
                                 self.evoked[(unit.tag, "prepare_landing")] = True
 
-                            if self.time - self.evoked.get("Last_enemy_aircraft_time", 0.0) >= 1.0\
-                                and unit.distance_to(self.my_groups[0].center) < 3.0:
+                            if self.time - self.evoked.get("Last_enemy_aircraft_time", 0.0) >= 1.0 \
+                                    and unit.distance_to(self.my_groups[0].center) < 3.0:
 
                                 landing_loc = self.evoked.get((unit.tag, "landing_loc"), None)
                                 if landing_loc is None or not await \
-                                        self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc):
+                                        self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE,
+                                                       position=landing_loc):
                                     # loc = await self.find_placement(building=AbilityId.MORPH_VIKINGASSAULTMODE, near=self.my_groups[0].center,
                                     #                             max_distance=20)
                                     dist = random.randint(4, 6)
                                     dist_x = random.randint(3, dist)
-                                    dist_y = math.sqrt(dist ** 2 - dist_x ** 2)\
-                                        if random.randint(0,1) == 0 else -math.sqrt(dist ** 2 - dist_x ** 2)
-                                    desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
+                                    dist_y = math.sqrt(dist ** 2 - dist_x ** 2) \
+                                        if random.randint(0, 1) == 0 else -math.sqrt(dist ** 2 - dist_x ** 2)
+                                    desire_add_vector = Point2(
+                                        (-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
                                     desired_pos = self.my_groups[0].center + desire_add_vector
                                     landing_loc = Point2((self.clamp(desired_pos.x, 0, self.map_width),
-                                                        self.clamp(desired_pos.y, 0, self.map_height)))
+                                                          self.clamp(desired_pos.y, 0, self.map_height)))
                                     self.evoked[(unit.tag, "landing_loc")] = landing_loc
                                 actions.append(unit.move(landing_loc))
                                 if unit.distance_to(landing_loc) < 5.0:
@@ -465,21 +473,23 @@ class Bot(sc2.BotAI):
                             else:
                                 # 타깃이 아예 없거나 있지만 일정 시간이 경과x or 그룹 센터간 거리가 아직 있음
                                 # 지상유닛 타깃이 있고 랜딩 준비중일때 그룹 센터에서 대기하기 위한 코드
-                                #if not targets.empty and self.evoked.get((unit.tag, "prepare_landing")):
-                                actions.append(unit.move(self.my_groups[0].center))
-                                
-                        else :
-                            actions.append(unit.attack(self.enemy_cc))
+                                # if not targets.empty and self.evoked.get((unit.tag, "prepare_landing")):
+                                actions.append(unit.attack(self.my_groups[0].center))
+                        else:
+                            if our_other_units.empty:
+                                actions.append(unit.move(self.cc.position))
+                            else:
+                                actions.append(unit.attack(self.enemy_cc))
 
 
             # 바이킹 전투 모드(지상)
             # 공격 우선순위 : 공중유닛 > 사정거리 내 탱크 > 지상유닛 > 적 커맨드
             if unit.type_id is UnitTypeId.VIKINGASSAULT:
 
-                enemy_air = self.known_enemy_units.flying
+                enemy_air = self.known_enemy_units.filter(lambda e: e.is_flying and e.can_be_attacked)
                 # 커맨드 때리는 동안은 공중모드로 변하지 않도록 함.
                 # 보이는 애들에 한해 타깃 선정!
-                ground_enemy_units = self.known_enemy_units.filter(lambda u: u.is_visible and not u.is_flying)
+                ground_enemy_units = self.known_enemy_units.filter(lambda u: not u.is_flying and u.can_be_attacked)
 
                 # 아래 코드는 모드 상관없이 작동
                 # 랜딩을 마쳤으므로 랜딩 준비 flag를 다시 False로 되돌림
