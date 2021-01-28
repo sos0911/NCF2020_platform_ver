@@ -123,6 +123,8 @@ class Bot(sc2.BotAI):
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 전체 유닛에서 사령부 검색
         # 내 그룹 initiate
         self.my_groups = []
+        # 적 그룹 initiate
+        self.enemy_groups = []
 
         # (32.5, 31.5) or (95.5, 31.5)
         if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0:
@@ -172,7 +174,7 @@ class Bot(sc2.BotAI):
         actions = list()  # 이번 step에 실행할 액션 목록
 
         if self.time - self.last_step_time >= self.step_interval:
-            #self.economy_strategy, self.army_strategy = self.set_strategy()
+            self.economy_strategy, self.army_strategy = self.set_strategy()
             self.last_step_time = self.time
 
         # set info
@@ -244,6 +246,8 @@ class Bot(sc2.BotAI):
         # 아군 그룹 정보 갱신
         if not self.units.not_structure.empty:
             self.my_groups = self.unit_groups()
+        # 적 그룹 정보 갱신
+        self.enemy_groups = self.enemy_unit_groups()
 
         # 아군 수리받는 메카닉 유닛들 cache
         self.being_repaired_units_list = []
@@ -386,7 +390,7 @@ class Bot(sc2.BotAI):
         elif self.can_afford(self.next_unit):
             if self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0:
                 # 해당 유닛 생산 가능하고, 마지막 명령을 발행한지 1초 이상 지났음
-                #actions.append(self.cc.train(self.next_unit))
+                actions.append(self.cc.train(self.next_unit))
                 self.next_unit = None
                 self.evoked[(self.cc.tag, 'train')] = self.time
 
@@ -400,19 +404,18 @@ class Bot(sc2.BotAI):
         # 자신이 배틀크루저일때 예외처리 필요.. 정보가 제대로 나오나?
         threats = []
 
-        if not self.known_enemy_units.empty:
-            if unit.is_flying or unit.type_id is UnitTypeId.BATTLECRUISER:
-                threats = self.known_enemy_units.filter(
-                    lambda u: u.can_attack_air and u.air_range + 3 >= unit.distance_to(u))
-                for eunit in self.known_enemy_units:
-                    if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(eunit):
-                        threats.append(eunit)
-            else:
-                threats = self.known_enemy_units.filter(
-                    lambda u: u.can_attack_ground and u.ground_range + 3 >= unit.distance_to(u))
-                for eunit in self.known_enemy_units:
-                    if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(eunit):
-                        threats.append(eunit)
+        if unit.is_flying or unit.type_id is UnitTypeId.BATTLECRUISER:
+            threats = self.known_enemy_units.filter(
+                lambda u: u.can_attack_air and u.air_range + 3 >= unit.distance_to(u))
+            for eunit in self.known_enemy_units:
+                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(eunit):
+                    threats.append(eunit)
+        else:
+            threats = self.known_enemy_units.filter(
+                lambda u: u.can_attack_ground and u.ground_range + 3 >= unit.distance_to(u))
+            for eunit in self.known_enemy_units:
+                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(eunit):
+                    threats.append(eunit)
 
         return threats
 
@@ -516,7 +519,6 @@ class Bot(sc2.BotAI):
                     # 이동!
                     dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
                                    self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
-                    print(self.time, " : ", dest)
                     actions.append(unit.move(dest))
 
         return actions
@@ -604,9 +606,9 @@ class Bot(sc2.BotAI):
         ret_groups = []
 
         # groups가 비는 경우는 적군 지상 유닛이 아예 없다는 것
-        # 이 경우 적군 커맨드 Point2가 그룹 센터가 되게끔 반환
+        # 이 경우 빈 리스트 반환
         if not groups:
-            return [self.enemy_cc]
+            return []
 
         # groups가 비지 않는 경우
         ret_groups.append(groups[0])
@@ -683,8 +685,6 @@ class Bot(sc2.BotAI):
                 target = self.enemy_cc
             else:
                 target = enemy_unit
-
-            #self.army_strategy = self.next_army_strategy
 
             if unit.type_id is not (UnitTypeId.MEDIVAC and UnitTypeId.RAVEN and UnitTypeId.SIEGETANK and UnitTypeId.SIEGETANKSIEGED and \
                     UnitTypeId.MULE and UnitTypeId.BANSHEE) and not self.evoked.get((unit.tag, "offense_mode"),False):
@@ -938,6 +938,7 @@ class Bot(sc2.BotAI):
                 # 시즈탱크
                 if unit.type_id is UnitTypeId.SIEGETANK:
                     # 전략이 offense거나 offense mode가 켜졌을 때
+                    our_other_units = self.units.not_structure - {unit}
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
                         # 타겟을 삼아 그 타겟이 사정거리 안에 들어올 때까지 이동
                         # 이동 후 시즈모드.
@@ -950,12 +951,19 @@ class Bot(sc2.BotAI):
                         if not armored_targets.empty:
                             target = armored_targets.closest_to(unit)
                         else:
-                            target = self.enemy_unit_groups()[0].center
+                            if not self.known_enemy_units.empty and self.enemy_groups:
+                                target = self.known_enemy_units.closest_to(self.enemy_groups[0].center)
+                            else:
+                                target = self.enemy_cc
 
-                        if unit.distance_to(target) > 13:
-                            if self.select_threat(unit).empty:
+                        if self.select_threat(unit).empty and not our_other_units.empty:
+                            if unit.distance_to(target) > 13:
                                 actions.append(unit.attack(target))
                             else:
+                                actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
+                                self.evoked[(unit.tag, "Last_sieged_mode_time")] = self.time
+                        else:
+                            if not self.select_threat(unit).empty:
                                 def target_func(unit):
                                     targets = self.known_enemy_units.filter(
                                         lambda u: not u.is_flying and u.is_visible)
@@ -963,9 +971,11 @@ class Bot(sc2.BotAI):
                                         return self.enemy_cc
                                     else:
                                         return targets.closest_to(unit)
-                                actions = self.defense_moving_shot(actions, unit, 3, target_func)
-                        else:
-                            actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
+
+                                actions = self.moving_shot(actions, unit, 3, target_func)
+                            if our_other_units.empty:
+                                actions.append(unit.move(self.cc))
+
 
                     # 전략이 offense가 아니고 offense mode도 아님
                     else:
@@ -979,23 +989,38 @@ class Bot(sc2.BotAI):
                         elif self.army_strategy is ArmyStrategy.READY_RIGHT:
                             rally_point = self.ready_right
 
-                        desired_pos = self.evoked.get((unit.tag, "desire_add_vector"), None)
-                        if desired_pos is None or (desired_pos is not None and\
-                                not await self.can_place(building=AbilityId.SIEGEMODE_SIEGEMODE, position=desired_pos)):
-                            dist = random.randint(5, 9)
-                            dist_x = random.randint(2, dist)
+                        desired_pos = self.evoked.get((unit.tag, "desired_pos"), None)
+                        # if desired_pos is None or (desired_pos is not None and\
+                        #         not await self.can_place(building=AbilityId.SIEGEMODE_SIEGEMODE, position=desired_pos)):
+                        if desired_pos is None or self.evoked.get((unit.tag, "rally_point"), self.enemy_cc) != rally_point:
+                            dist = random.randint(8, 10)
+                            dist_x = random.randint(6, dist)
                             dist_y = math.sqrt(dist ** 2 - dist_x ** 2) if random.randint(0, 1) == 0 else -math.sqrt(
                                 dist ** 2 - dist_x ** 2)
                             desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
                             desired_pos = rally_point + desire_add_vector
                             desired_pos = Point2((self.clamp(desired_pos.x, 0, self.map_width),
                                                   self.clamp(desired_pos.y, 0, self.map_height)))
-                            self.evoked[(unit.tag, "desire_add_vector")] = desire_add_vector
+                            self.evoked[(unit.tag, "desired_pos")] = desired_pos
+                            self.evoked[(unit.tag, "rally_point")] = rally_point
 
-                        if unit.distance_to(desired_pos) >= 4.0:
-                            actions.append(unit.move(desired_pos))
+                        if self.select_threat(unit).empty:
+                            if unit.distance_to(desired_pos) >= 3.0:
+                                actions.append(unit.move(desired_pos))
+                            else:
+                                actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
+                                self.evoked[(unit.tag, "Last_sieged_mode_time")] = self.time
                         else:
-                            actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
+                            def target_func(unit):
+                                targets = self.known_enemy_units.filter(
+                                    lambda u: not u.is_flying and u.is_visible)
+                                if targets.empty:
+                                    return self.enemy_cc
+                                else:
+                                    return targets.closest_to(unit)
+
+                            actions = self.moving_shot(actions, unit, 3, target_func)
+
 
                 # 시즈모드 시탱
                 # 시즈모드일 때는 공격모드이거나 offense mode가 켜졌을 때에 관해 행동을 기술
@@ -1009,11 +1034,22 @@ class Bot(sc2.BotAI):
                             target = armored_targets.closest_to(unit)
                             actions.append(unit.attack(target))
                         else:
-                            target = self.enemy_unit_groups()[0].center
+                            if not self.known_enemy_units.not_structure.empty and self.enemy_groups:
+                                target = self.known_enemy_units.not_structure.closest_to(self.enemy_groups[0].center)
+                            else:
+                                # 적 커맨드가 보이면 커맨드 유닛 자체를 타겟으로, 아니면 좌표로..
+                                target = self.known_enemy_units(UnitTypeId.COMMANDCENTER).first if self.is_visible(self.enemy_cc)\
+                                    else self.enemy_cc
                             if target in targets:
                                 actions.append(unit.attack(target))
-                            else:
+                            elif self.time - self.evoked.get((unit.tag, "Last_sieged_mode_time"), -10.0) >= 6.0:
                                 actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+
+                    else:
+                        # 만약 현재 시즈박은 위치가 원래 있어야 할 위치와 다르면 시즈모드 풀기
+                        desired_pos = self.evoked.get((unit.tag, "desired_pos"))
+                        if unit.distance_to(desired_pos) >= 3.0:
+                            actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
 
                 ## SIEGE TANK END ##
 
@@ -1186,8 +1222,8 @@ class Bot(sc2.BotAI):
                                 landing_loc = self.evoked.get((unit.tag, "landing_loc"), None)
                                 if self.evoked.get((unit.tag, "prepare_landing")) and \
                                         (landing_loc is None or (landing_loc is not None and \
-                                (not (ground_targets.closest_distance_to(landing_loc) >= 9 and ground_targets.closest_distance_to(landing_loc) <= 15) or \
-                                not await self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc)))):
+                                (not (9 <= ground_targets.closest_distance_to(landing_loc) <= 15) or \
+                                 not await self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc)))):
                                     dist = random.randint(8, 10)
                                     dist_x = random.randint(7, dist)
                                     dist_y = math.sqrt(dist ** 2 - dist_x ** 2) \
@@ -1199,10 +1235,12 @@ class Bot(sc2.BotAI):
                                                           self.clamp(desired_pos.y, 0, self.map_height)))
                                     self.evoked[(unit.tag, "landing_loc")] = landing_loc
 
-                                if self.evoked.get((unit.tag, "prepare_landing")):
-                                    actions.append(unit.move(landing_loc))
+                                if self.evoked.get((unit.tag, "prepare_landing")) and \
+                                        9 <= ground_targets.closest_distance_to(landing_loc) <= 15:
                                     if unit.distance_to(landing_loc) < 5.0:
                                         actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
+                                    else:
+                                        actions.append(unit.move(landing_loc))
 
                             else:
                                 if our_other_units.empty:

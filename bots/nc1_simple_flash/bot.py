@@ -429,60 +429,60 @@ class Bot(sc2.BotAI):
 
                     actions = self.moving_shot(actions, unit, 10, target_func)
 
-           if unit.type_id is UnitTypeId.BANSHEE:
+                    if unit.type_id is UnitTypeId.BANSHEE:
 
-                # 아래 내용은 공격 정책이거나 offense mode가 아닐 시에도 항시 적용됨
-                threats = self.select_threat(unit)
+                        # 아래 내용은 공격 정책이거나 offense mode가 아닐 시에도 항시 적용됨
+                        threats = self.select_threat(unit)
 
-                # clock_threats = self.cached_known_enemy_units.filter(
-                #     lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
+                        # clock_threats = self.cached_known_enemy_units.filter(
+                        #     lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
 
-                # 근처에 위협이 존재할 시 클라킹
-                # 하지만 정찰 유닛(마린 1기)만 있을 시에는 클라킹을 하지 않는다.
-                # 이 경우는 하는 것이 손해!
-                if not threats.empty and not (threats.amount == 1 and threats.first.type_id == UnitTypeId.MARINE) and \
-                        not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.2:
-                    actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
+                        # 근처에 위협이 존재할 시 클라킹
+                        # 하지만 정찰 유닛(마린 1기)만 있을 시에는 클라킹을 하지 않는다.
+                        # 이 경우는 하는 것이 손해!
+                        if not threats.empty and not (threats.amount == 1 and threats.first.type_id == UnitTypeId.MARINE) and \
+                                not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.2:
+                            actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
 
-                # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
-                '''
-                if not threats.empty:
-                    self.evoked[(unit.tag, "BANSHEE_CLOAK")] = self.time
+                        # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
+                        '''
+                        if not threats.empty:
+                            self.evoked[(unit.tag, "BANSHEE_CLOAK")] = self.time
+        
+                        if threats.empty and self.time - self.evoked.get((unit.tag, "BANSHEE_CLOAK"), 0.0) >= 10 \
+                                and unit.has_buff(BuffId.BANSHEECLOAK):
+                            actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
+                        '''
 
-                if threats.empty and self.time - self.evoked.get((unit.tag, "BANSHEE_CLOAK"), 0.0) >= 10 \
-                        and unit.has_buff(BuffId.BANSHEECLOAK):
-                    actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
-                '''
+                        # 클락이거나 클락이 가능하면 attacking
+                        if unit.has_buff(BuffId.BANSHEECLOAK) or unit.energy >= 50 :
 
-                # 클락이거나 클락이 가능하면 attacking 
-                if unit.has_buff(BuffId.BANSHEECLOAK) or unit.energy >= 50 :
+                            def target_func(unit):
+                                enemy_tanks = self.known_enemy_units.filter(
+                                    lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
+                                if enemy_tanks.amount > 0:
+                                    target = enemy_tanks.closest_to(unit.position)
+                                    return target
+                                # 만약 탱크가 없다면 HP가 가장 적으면서 가까운 아무 지상 유닛이나, 그것도 없다면 커맨드 직행
+                                else:
+                                    targets = self.known_enemy_units.filter(
+                                        lambda u: u.type_id is not UnitTypeId.COMMANDCENTER and not u.is_flying)
+                                    max_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2)
+                                    if not targets.empty:
+                                        target = targets.sorted(lambda u: u.health_percentage + unit.distance_to(u) / max_dist)[0]
+                                        return target
+                                    else:
+                                        return self.enemy_cc
 
-                    def target_func(unit):
-                        enemy_tanks = self.known_enemy_units.filter(
-                            lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
-                        if enemy_tanks.amount > 0:
-                            target = enemy_tanks.closest_to(unit.position)
-                            return target
-                        # 만약 탱크가 없다면 HP가 가장 적으면서 가까운 아무 지상 유닛이나, 그것도 없다면 커맨드 직행
+                            # 공격
+                            # 은신 상태이면서 밤까마귀가 감지하고 있지 않으면 그냥 공격
+                            # 그 상태가 아니라면 무빙샷.
+                            # TODO : 은신이 감지되고 있는지 확인이 불가함. CloakState 작동 불가
+                            # 무빙샷 함수 안에 cloak에 대한 예외처리도 되어 있다.
+                            actions = self.moving_shot(actions, unit, 5, target_func)
+
                         else:
-                            targets = self.known_enemy_units.filter(
-                                lambda u: u.type_id is not UnitTypeId.COMMANDCENTER and not u.is_flying)
-                            max_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2)
-                            if not targets.empty:
-                                target = targets.sorted(lambda u: u.health_percentage + unit.distance_to(u) / max_dist)[0]
-                                return target
-                            else:
-                                return self.enemy_cc
-
-                    # 공격
-                    # 은신 상태이면서 밤까마귀가 감지하고 있지 않으면 그냥 공격
-                    # 그 상태가 아니라면 무빙샷.
-                    # TODO : 은신이 감지되고 있는지 확인이 불가함. CloakState 작동 불가
-                    # 무빙샷 함수 안에 cloak에 대한 예외처리도 되어 있다.
-                    actions = self.moving_shot(actions, unit, 5, target_func)
-
-                else:
-                    actions.append(unit.attack(self.cc.position))
+                            actions.append(unit.attack(self.cc.position))
 
             # 바이킹 전투기 모드(공중)
             if unit.type_id is UnitTypeId.VIKINGFIGHTER:
@@ -493,7 +493,7 @@ class Bot(sc2.BotAI):
                 # 우선순위 2. 1이 해당되는 놈들이 없다면(적의 공중 유닛이 없다면) 탱크 중 가장 hp 없는 놈 바로 아래에 내려서 공격
                 # 탱크가 없다면 주위 임의의 지상 유닛을 때린다.
                 # 우선순위 3. 1,2가 해당되지 않는다면 바로 커맨드로 가서 변환 후 때리기
-                if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
+                if self.attacking == True or self.tmp_attacking:
                     # 랜딩 flag initiate
                     if self.evoked.get((unit.tag, "prepare_landing"), None) is None:
                         self.evoked[(unit.tag, "prepare_landing")] = False
@@ -533,8 +533,8 @@ class Bot(sc2.BotAI):
                             landing_loc = self.evoked.get((unit.tag, "landing_loc"), None)
                             if self.evoked.get((unit.tag, "prepare_landing")) and \
                                     (landing_loc is None or (landing_loc is not None and \
-                            (not (ground_targets.closest_distance_to(landing_loc) >= 9 and ground_targets.closest_distance_to(landing_loc) <= 15) or \
-                            not await self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc)))):
+                            (not (9 <= ground_targets.closest_distance_to(landing_loc) <= 15) or \
+                             not await self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc)))):
                                 dist = random.randint(8, 10)
                                 dist_x = random.randint(7, dist)
                                 dist_y = math.sqrt(dist ** 2 - dist_x ** 2) \
@@ -546,10 +546,12 @@ class Bot(sc2.BotAI):
                                                         self.clamp(desired_pos.y, 0, self.map_height)))
                                 self.evoked[(unit.tag, "landing_loc")] = landing_loc
 
-                            if self.evoked.get((unit.tag, "prepare_landing")):
-                                actions.append(unit.move(landing_loc))
+                            if self.evoked.get((unit.tag, "prepare_landing")) and \
+                                    9 <= ground_targets.closest_distance_to(landing_loc) <= 15:
                                 if unit.distance_to(landing_loc) < 5.0:
                                     actions.append(unit(AbilityId.MORPH_VIKINGASSAULTMODE))
+                                else:
+                                    actions.append(unit.move(landing_loc))
 
                         else:
                             if our_other_units.empty:

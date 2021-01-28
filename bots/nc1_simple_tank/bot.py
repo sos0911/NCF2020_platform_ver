@@ -47,6 +47,7 @@ class Bot(sc2.BotAI):
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first
 
         self.my_groups = []
+        self.enemy_groups = []
 
         # (32.5, 31.5) or (95.5, 31.5)
         if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0:
@@ -58,6 +59,148 @@ class Bot(sc2.BotAI):
 
     def clamp(self, num, min_value, max_value):
         return max(min(num, max_value), min_value)
+
+    # 무빙샷
+    def moving_shot(self, actions, unit, cooldown, target_func, margin_health: float = 0, minimum: float = 0):
+
+        # print("WEAPON COOLDOWN : ", unit.weapon_cooldown)
+        threats = self.select_threat(unit)
+
+        if unit.weapon_cooldown < cooldown:
+            target = target_func(unit)
+            if self.time - self.evoked.get((unit.tag, "COOLDOWN"), 0.0) >= minimum:
+                actions.append(unit.attack(target))
+                self.evoked[(unit.tag, "COOLDOWN")] = self.time
+
+        elif (margin_health == 0 or unit.health_percentage <= margin_health) and self.time - self.evoked.get(
+                (unit.tag, "COOLDOWN"), 0.0) >= minimum:  # 무빙을 해야한다면
+            maxrange = 0
+            total_move_vector = Point2((0, 0))
+            showing_only_enemy_units = self.known_enemy_units.not_structure.filter(lambda e: e.is_visible)
+
+            # 자신이 클라킹 상태가 아닐 때나 클라킹 상태이지만 발각됬을 때
+            is_revealed = False
+            enemy_ravens = self.known_enemy_units(UnitTypeId.RAVEN)
+            for e_raven in enemy_ravens:
+                if unit.distance_to(e_raven) <= e_raven.detect_range:
+                    is_revealed = True
+                    break
+
+            if not unit.is_cloaked or is_revealed:
+                if not unit.is_flying:
+                    # 배틀크루저 예외처리.
+                    # 배틀은 can_attack_air/ground와 무기 범위가 다 false, 0이다.
+                    for eunit in threats:
+                        if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                            maxrange = max(maxrange, 6)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        else:
+                            maxrange = max(maxrange, eunit.ground_range)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.ground_range + 3 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                else:
+                    for eunit in threats:
+                        if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                            maxrange = max(maxrange, 6)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        else:
+                            maxrange = max(maxrange, eunit.air_range)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.air_range + 3 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+
+                if not threats.empty:
+                    total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                    total_move_vector *= maxrange
+                    # 이동!
+                    dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                   self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                    actions.append(unit.move(dest))
+
+        return actions
+
+    # 방어형 무빙샷
+    # 차이점 : 쿨다운이 설정한 값보다 낮더라도 위협이 근처에 있으면 타겟에 대한 공격 명령과 동시에 철수 명령을 내림
+    # 기대 효과 : 때릴 수 있으면 때리고 그렇지 못하면 접근을 하지 않을 것임
+    # 무빙샷
+    def defense_moving_shot(self, actions, unit, cooldown, target_func, margin_health: float = 0,
+                            minimum: float = 0):
+
+        # print("WEAPON COOLDOWN : ", unit.weapon_cooldown)
+        threats = self.select_threat(unit)
+        check_threats = threats.filter(lambda u: not u.is_flying)
+
+        if unit.weapon_cooldown < cooldown:
+            target = target_func(unit)
+            if self.time - self.evoked.get((unit.tag, "COOLDOWN"), 0.0) >= minimum:
+                actions.append(unit.attack(target))
+                self.evoked[(unit.tag, "COOLDOWN")] = self.time
+
+        if (unit.weapon_cooldown >= cooldown or not check_threats.empty) and \
+                (margin_health == 0 or unit.health_percentage <= margin_health) and self.time - self.evoked.get(
+            (unit.tag, "COOLDOWN"), 0.0) >= minimum:  # 무빙을 해야한다면
+            maxrange = 0
+            total_move_vector = Point2((0, 0))
+            showing_only_enemy_units = self.known_enemy_units.not_structure.filter(lambda e: e.is_visible)
+
+            # 자신이 클라킹 상태가 아닐 때나 클라킹 상태이지만 발각됬을 때
+            is_revealed = False
+            enemy_ravens = self.known_enemy_units(UnitTypeId.RAVEN)
+            for e_raven in enemy_ravens:
+                if unit.distance_to(e_raven) <= e_raven.detect_range:
+                    is_revealed = True
+                    break
+
+            if not unit.is_cloaked or is_revealed:
+                if not unit.is_flying:
+                    # 배틀크루저 예외처리.
+                    # 배틀은 can_attack_air/ground와 무기 범위가 다 false, 0이다.
+                    for eunit in threats:
+                        if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                            maxrange = max(maxrange, 6)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        else:
+                            maxrange = max(maxrange, eunit.ground_range)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.ground_range + 3 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                else:
+                    for eunit in threats:
+                        if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                            maxrange = max(maxrange, 6)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+                        else:
+                            maxrange = max(maxrange, eunit.air_range)
+                            move_vector = unit.position - eunit.position
+                            move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                            move_vector *= (eunit.air_range + 3 - unit.distance_to(eunit)) * 1.5
+                            total_move_vector += move_vector
+
+                if not threats.empty:
+                    total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                    total_move_vector *= maxrange
+                    # 이동!
+                    dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                   self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                    actions.append(unit.move(dest))
+
+        return actions
 
     def select_threat(self, unit):
         # 자신에게 위협이 될 만한 상대 유닛들을 리턴
@@ -77,6 +220,40 @@ class Bot(sc2.BotAI):
                     threats.append(eunit)
 
         return threats
+
+    # 적 유닛 그룹 정하기
+    # 전차 시즈모드 공격을 위한 method
+    # 오로지 적 지상유닛에 한하여 만들기
+
+    def enemy_unit_groups(self):
+        groups = []
+        center_candidates = self.known_enemy_units.not_structure.filter(lambda
+                                                                            u: not u.is_flying and u.is_visible)
+        for eunit in center_candidates:
+            group = center_candidates.closer_than(5, eunit)
+            groups.append(group)
+
+        groups.sort(key=lambda g: g.amount, reverse=True)
+        ret_groups = []
+
+        # groups가 비는 경우는 적군 지상 유닛이 아예 없다는 것
+        # 이 경우 빈 리스트 반환
+        if not groups:
+            return []
+
+        # groups가 비지 않는 경우
+        ret_groups.append(groups[0])
+        selected_units = groups[0]
+
+        group_num = int(self.known_enemy_units.not_structure.amount / 10.0)
+
+        for i in range(0, group_num):
+            groups.sort(key=lambda g: (g - selected_units).amount, reverse=True)
+            # groups.sorted(lambda g : g.filter(lambda u : not (u in selected_units)), reverse=True)
+            ret_groups.append(groups[0])
+            selected_units = selected_units or groups[0]
+
+        return ret_groups
 
     def unit_groups(self):
         groups = []
@@ -111,8 +288,12 @@ class Bot(sc2.BotAI):
     async def on_step(self, iteration: int):       
         actions = list()
 
+        # 아군 그룹 정보 갱신
         if not self.units.not_structure.empty:
             self.my_groups = self.unit_groups()
+        # 적 그룹 정보 갱신
+        self.enemy_groups = self.enemy_unit_groups()
+
         #
         # 빌드 오더 생성
         #
@@ -221,7 +402,7 @@ class Bot(sc2.BotAI):
             else:
                 target = self.enemy_cc
 
-            if not unit.type_id in [UnitTypeId.RAVEN, UnitTypeId.MULE, UnitTypeId.BANSHEE]:
+            if not unit.type_id in [UnitTypeId.RAVEN, UnitTypeId.MULE, UnitTypeId.BANSHEE, UnitTypeId.SIEGETANKSIEGED, UnitTypeId.SIEGETANK]:
                 #if unit.type_id is UnitTypeId.RAVEN:
                 #    pass
                 #    #print("check")
@@ -237,10 +418,10 @@ class Bot(sc2.BotAI):
                     actions.append(unit.attack(self.rally_point))
                 else:
                     self.tmp_attacking = True
-                    #actions.append(unit.attack(target))
+                    actions.append(unit.attack(target))
 
             if unit.type_id is UnitTypeId.MARINE :
-                if unit.distance_to(target) < 15 and self.attacking == True and self.known_enemy_units.amount >= 3:
+                if unit.distance_to(target) < 15 and (self.attacking == True or self.tmp_attacking) and self.known_enemy_units.amount >= 3:
                     # 해병과 목표의 거리가 15이하일 경우 스팀팩 사용
                     if not unit.has_buff(BuffId.STIMPACK) and unit.health_percentage > 0.5:
                         # 현재 스팀팩 사용중이 아니며, 체력이 50% 이상
@@ -249,88 +430,117 @@ class Bot(sc2.BotAI):
                             actions.append(unit(AbilityId.EFFECT_STIM))
                             self.evoked[(unit.tag, AbilityId.EFFECT_STIM)] = self.time
 
+            ## SIEGE TANK ##
+
             # 시즈탱크
             if unit.type_id is UnitTypeId.SIEGETANK:
-                # desired_vector 관련된 정보는 모드에 관계없이 항상 갱신.
-                # default : cc.position
-                desired_pos = self.cc.position
+                # attacking
+                our_other_units = self.units.not_structure - {unit}
+                if self.attacking == True or self.tmp_attacking:
+                    # 타겟을 삼아 그 타겟이 사정거리 안에 들어올 때까지 이동
+                    # 이동 후 시즈모드.
+                    # 시즈모드 박기 전에 위협이 근처에 존재하면 무빙샷
 
-                if self.my_groups:
-                    # 만약 첫 프레임이거나 이전 프레임에 설정된 그룹 센터와 현재 계산된 그룹 센터가 일정 거리 이상(5)다르다면 이동
-                    if self.evoked.get((unit.tag, "desire_add_vector"), None) is None:
-                        dist = random.randint(5, 9)
-                        dist_x = random.randint(2, dist)
+                    targets = self.known_enemy_units.filter(
+                        lambda u: not u.is_flying and u.is_visible and unit.distance_to(u) <= 13)
+                    target = None
+                    armored_targets = targets.filter(lambda u: u.is_armored)
+                    if not armored_targets.empty:
+                        target = armored_targets.closest_to(unit)
+                    else:
+                        if not self.known_enemy_units.empty and self.enemy_groups:
+                            target = self.known_enemy_units.closest_to(self.enemy_groups[0].center)
+                        else:
+                            target = self.enemy_cc
+
+                    if self.select_threat(unit).empty and not our_other_units.empty:
+                        if unit.distance_to(target) > 13:
+                            actions.append(unit.attack(target))
+                        else:
+                            actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
+                            self.evoked[(unit.tag, "Last_sieged_mode_time")] = self.time
+                    else:
+                        if not self.select_threat(unit).empty:
+                            def target_func(unit):
+                                targets = self.known_enemy_units.filter(
+                                    lambda u: not u.is_flying and u.is_visible)
+                                if targets.empty:
+                                    return self.enemy_cc
+                                else:
+                                    return targets.closest_to(unit)
+
+                            actions = self.moving_shot(actions, unit, 3, target_func)
+                        if our_other_units.empty:
+                            actions.append(unit.move(self.cc))
+
+                # attacking이 모두 아닐 때
+                else:
+                    desired_pos = self.evoked.get((unit.tag, "desired_pos"), None)
+                    # if desired_pos is None or (desired_pos is not None and\
+                    #         not await self.can_place(building=AbilityId.SIEGEMODE_SIEGEMODE, position=desired_pos)):
+                    if desired_pos is None or self.evoked.get((unit.tag, "rally_point"), self.enemy_cc) != self.rally_point:
+                        dist = random.randint(8, 10)
+                        dist_x = random.randint(6, dist)
                         dist_y = math.sqrt(dist ** 2 - dist_x ** 2) if random.randint(0, 1) == 0 else -math.sqrt(
                             dist ** 2 - dist_x ** 2)
-                        desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2((dist_x, dist_y))
-                        desired_pos = self.my_groups[0].center + desire_add_vector
+                        desire_add_vector = Point2((-dist_x, dist_y)) if self.cc.position.x < 50 else Point2(
+                            (dist_x, dist_y))
+                        desired_pos = self.rally_point + desire_add_vector
                         desired_pos = Point2((self.clamp(desired_pos.x, 0, self.map_width),
-                                                self.clamp(desired_pos.y, 0, self.map_height)))
-                        self.evoked[(unit.tag, "group_center")] = self.my_groups[0].center
-                        self.evoked[(unit.tag, "desire_add_vector")] = desire_add_vector
+                                              self.clamp(desired_pos.y, 0, self.map_height)))
+                        self.evoked[(unit.tag, "desired_pos")] = desired_pos
+                        self.evoked[(unit.tag, "rally_point")] = self.rally_point
+
+                    if self.select_threat(unit).empty:
+                        if unit.distance_to(desired_pos) >= 3.0:
+                            actions.append(unit.move(desired_pos))
+                        else:
+                            actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
+                            self.evoked[(unit.tag, "Last_sieged_mode_time")] = self.time
                     else:
-                        if self.my_groups[0].center.distance_to(
-                                self.evoked.get((unit.tag, "group_center"), self.cc.position)) > 7:
-                            self.evoked[(unit.tag, "group_center")] = self.my_groups[0].center
-                        desired_pos = self.evoked.get((unit.tag, "group_center"), self.cc.position) + self.evoked.get(
-                            (unit.tag, "desire_add_vector"), None)
+                        def target_func(unit):
+                            targets = self.known_enemy_units.filter(
+                                lambda u: not u.is_flying and u.is_visible)
+                            if targets.empty:
+                                return self.enemy_cc
+                            else:
+                                return targets.closest_to(unit)
 
-                # 시즈탱크는 공격, 방어 상관없이 기본적으로 항상 정해진 그룹 센터 주변으로 포지셔닝
-                # 그룹 센터에서 상대적으로 뒤쪽에 대기한다.
-                # 그룹 센터에서 거리는 왼쪽으로 랜덤으로 정해지되, 5-9 정도.
-                # 근처 위협이 있다면 무빙샷
-
-                threats = self.select_threat(unit)
-
-                # 주위에 자신을 노리는 애들이 없는 경우는 항상 desired_pos로 이동
-                # desired_pos 근처에 도달하면 시즈모드.
-                # 자신을 노리는 애들이 있다면 해당 상대를 향햐여 무빙샷
-                if threats.empty:
-                    if int(unit.position.x) == int(desired_pos.x) and int(unit.position.y) == int(
-                            desired_pos.y):
-                        # 근처에 위협이 없고 도착 지점 근처에 다다랐으면 시즈모드.
-                        actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
-                    else:
-                        actions.append(unit.attack(desired_pos))
-                # 만약 있다면 시즈모드 말고 무빙샷
-                else:
-                    actions.append(unit.attack(target))
-
+                        actions = self.moving_shot(actions, unit, 3, target_func)
 
             # 시즈모드 시탱
-            # 시즈모드일 때에도 공격, 방어모드 상관없이 작동한다.
+            # 시즈모드일 때는 공격모드이거나 offense mode가 켜졌을 때에 관해 행동을 기술
+            # 방어모드이고 offense mode가 아닐 때에는 따로 필요없음
             if unit.type_id is UnitTypeId.SIEGETANKSIEGED:
-                if self.known_enemy_units.not_structure.exists:
-                    # 타겟팅 정하기
-                    target = None
-                    # HP 적은 애를 타격하지만, 중장갑 위주
-                    targets = self.known_enemy_units.not_structure.filter(lambda u: not u.is_flying and unit.distance_to(u) <= unit.ground_range)
+                if self.attacking == True or self.tmp_attacking:
+                    targets = self.known_enemy_units.filter(
+                        lambda u: not u.is_flying and u.is_visible and unit.distance_to(
+                            u) <= unit.ground_range)
                     armored_targets = targets.filter(lambda u: u.is_armored)
-                    light_targets = targets - armored_targets
                     if not armored_targets.empty:
-                        target = armored_targets.sorted(lambda u: u.health)[0]
-                    elif not light_targets.empty:
-                        target = light_targets.sorted(lambda u: u.health)[0]
-
-                    if target is not None:
+                        target = armored_targets.closest_to(unit)
                         actions.append(unit.attack(target))
-
-                    # 시즈모드 풀지 안풀지 결정하기
-                    # 나와있는 ground_range에 0.7쯤 더해야 실제 사정거리가 된다..
-                    # 넉넉잡아 2로..
-                    threats = self.select_threat(unit)
-                    # # 한 유닛이라도 자신을 때릴 수 있으면 바로 시즈모드 해제
-                    # if threats.amount > 0:
-                    #     actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
-                    for eunit in threats:
-                        if unit.distance_to(eunit) < 3.5:
+                    else:
+                        if not self.known_enemy_units.not_structure.empty and self.enemy_groups:
+                            target = self.known_enemy_units.not_structure.closest_to(
+                                self.enemy_groups[0].center)
+                        else:
+                            # 적 커맨드가 보이면 커맨드 유닛 자체를 타겟으로, 아니면 좌표로..
+                            target = self.known_enemy_units(
+                                UnitTypeId.COMMANDCENTER).first if self.is_visible(self.enemy_cc) \
+                                else self.enemy_cc
+                        if target in targets:
+                            actions.append(unit.attack(target))
+                        elif self.time - self.evoked.get((unit.tag, "Last_sieged_mode_time"),
+                                                         -10.0) >= 6.0:
                             actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
-                            break
-
-                # 어느 때라도 상관없이 그룹 센터가 일정 거리 이상(10)달라지면 시즈모드 풀기(이동 준비)
-                if self.my_groups:
-                    if self.my_groups[0].center.distance_to(self.evoked.get((unit.tag, "group_center"))) > 7:
+                else:
+                    # 만약 현재 시즈박은 위치가 원래 있어야 할 위치와 다르면 시즈모드 풀기
+                    desired_pos = self.evoked.get((unit.tag, "desired_pos"))
+                    if unit.distance_to(desired_pos) >= 3.0:
                         actions.append(unit(AbilityId.UNSIEGE_UNSIEGE))
+
+            ## SIEGE TANK END ##
 
             # RAVEN
             if unit.type_id is UnitTypeId.RAVEN:
