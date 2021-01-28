@@ -91,15 +91,15 @@ class Bot(sc2.BotAI):
         threats = []
         if unit.is_flying or unit.type_id is UnitTypeId.BATTLECRUISER:
             threats = self.known_enemy_units.filter(
-                lambda u: u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))
+                lambda u: u.can_attack_air and u.air_range + 3 >= unit.distance_to(u))
             for eunit in self.known_enemy_units:
-                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 2.5 >= unit.distance_to(eunit):
+                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(eunit):
                     threats.append(eunit)
         else:
             threats = self.known_enemy_units.filter(
-                lambda u: u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u))
+                lambda u: u.can_attack_ground and u.ground_range + 3 >= unit.distance_to(u))
             for eunit in self.known_enemy_units:
-                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 2.5 >= unit.distance_to(eunit):
+                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(eunit):
                     threats.append(eunit)
 
         return threats

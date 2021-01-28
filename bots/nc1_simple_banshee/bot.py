@@ -87,36 +87,36 @@ class Bot(sc2.BotAI):
                     # 배틀은 can_attack_air/ground와 무기 범위가 다 false, 0이다.
                     threats = showing_only_enemy_units.filter(
                         lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
-                                u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u))))
+                                u.can_attack_ground and u.ground_range + 3 >= unit.distance_to(u))))
                     for eunit in threats:
                         if eunit.type_id is UnitTypeId.BATTLECRUISER:
                             maxrange = max(maxrange, 6)
                             move_vector = unit.position - eunit.position
                             move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                            move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
+                            move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
                             total_move_vector += move_vector
                         else:
                             maxrange = max(maxrange, eunit.ground_range)
                             move_vector = unit.position - eunit.position
                             move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                            move_vector *= (eunit.ground_range + 2 - unit.distance_to(eunit)) * 1.5
+                            move_vector *= (eunit.ground_range + 3 - unit.distance_to(eunit)) * 1.5
                             total_move_vector += move_vector
                 else:
                     threats = showing_only_enemy_units.filter(
-                        lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(u)) or (
-                                u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))))
+                        lambda u: ((u.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(u)) or (
+                                u.can_attack_air and u.air_range + 3 >= unit.distance_to(u))))
                     for eunit in threats:
                         if eunit.type_id is UnitTypeId.BATTLECRUISER:
                             maxrange = max(maxrange, 6)
                             move_vector = unit.position - eunit.position
                             move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                            move_vector *= (6 + 2 - unit.distance_to(eunit)) * 1.5
+                            move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
                             total_move_vector += move_vector
                         else:
                             maxrange = max(maxrange, eunit.air_range)
                             move_vector = unit.position - eunit.position
                             move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
-                            move_vector *= (eunit.air_range + 2 - unit.distance_to(eunit)) * 1.5
+                            move_vector *= (eunit.air_range + 3 - unit.distance_to(eunit)) * 1.5
                             total_move_vector += move_vector
 
                 if not threats.empty:
@@ -135,15 +135,15 @@ class Bot(sc2.BotAI):
         threats = []
         if unit.is_flying or unit.type_id is UnitTypeId.BATTLECRUISER:
             threats = self.known_enemy_units.filter(
-                lambda u: u.can_attack_air and u.air_range + 2 >= unit.distance_to(u))
+                lambda u: u.can_attack_air and u.air_range + 3 >= unit.distance_to(u))
             for eunit in self.known_enemy_units:
-                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(eunit):
+                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(eunit):
                     threats.append(eunit)
         else:
             threats = self.known_enemy_units.filter(
-                lambda u: u.can_attack_ground and u.ground_range + 2 >= unit.distance_to(u))
+                lambda u: u.can_attack_ground and u.ground_range + 3 >= unit.distance_to(u))
             for eunit in self.known_enemy_units:
-                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 2 >= unit.distance_to(eunit):
+                if eunit.type_id is UnitTypeId.BATTLECRUISER and 6 + 3 >= unit.distance_to(eunit):
                     threats.append(eunit)
 
         return threats
@@ -210,7 +210,7 @@ class Bot(sc2.BotAI):
 
         self.train_raven = False
         for enemy in self.known_enemy_units :
-            if enemy.type_id is UnitTypeId.BANSHEE:
+            if enemy.type_id is UnitTypeId.BANSHEE and self.units(UnitTypeId.RAVEN).empty:
                 self.train_raven = True
                 break
 
@@ -239,6 +239,8 @@ class Bot(sc2.BotAI):
         if self.build_order and self.can_afford(self.build_order[0]) and self.time - self.evoked.get((self.cc.tag, 'train'), 0) > 1.0:
             # 해당 유닛 생산 가능하고, 마지막 명령을 발행한지 1초 이상 지났음
             actions.append(self.cc.train(self.build_order[0]))  # 첫 번째 유닛 생산 명령 
+            if self.build_order[0] == UnitTypeId.RAVEN :
+                self.train_raven = False
             del self.build_order[0]  # 빌드오더에서 첫 번째 유닛 제거
             self.evoked[(self.cc.tag, 'train')] = self.time
 
@@ -296,7 +298,11 @@ class Bot(sc2.BotAI):
 
                 if self.attacking == False and (closest_dist > 7.0 and not is_attacked):
                     self.tmp_attacking = False
-                    actions.append(unit.attack(self.rally_point))
+
+                    if unit.type_id is UnitTypeId.MARINE and self.known_enemy_units(UnitTypeId.BANSHEE).filter(lambda e : not e.is_visible) :
+                        actions.append(unit.attack(self.escape_point))
+                    else :   
+                        actions.append(unit.attack(self.rally_point))
                 else:
                     self.tmp_attacking = True
                     #actions.append(unit.attack(target))
@@ -399,18 +405,45 @@ class Bot(sc2.BotAI):
                                     actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
                     # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
                 else :
-                    enemy_banshee = self.known_enemy_units(UnitTypeId.BANSHEE)
+                    threats = self.select_threat(unit) # 위협이 있으면 ㅌㅌ
+                    if not threats.empty:
+                        maxrange = 0
+                        total_move_vector = Point2((0, 0))
+                        for eunit in threats:
+                            if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                                maxrange = max(maxrange, 6)
+                                move_vector = unit.position - eunit.position
+                                move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                                move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
+                                total_move_vector += move_vector
+                            else:
+                                maxrange = max(maxrange, eunit.air_range)
+                                move_vector = unit.position - eunit.position
+                                move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                                move_vector *= (eunit.air_range + 3 - unit.distance_to(eunit)) * 1.5
+                                total_move_vector += move_vector
+
                     
-                    if enemy_banshee.exists :
-                        banshee_in_raven = enemy_banshee.closer_than(9.5, unit)
-                        #print(banshee_in_raven)
-                        if banshee_in_raven.amount / enemy_banshee.amount >= 0.5 :
-                            actions.append(unit.move(self.cc))
-                        else :
-                            #print("???")
-                            actions.append(unit.move(enemy_banshee.closest_to(unit).position))
-                    elif self.units.not_structure.exists:  # 전투그룹 중앙 대기
-                        actions.append(unit.move(self.my_groups[0].center))
+                            total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                            total_move_vector *= maxrange
+                            # 이동!
+                            dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                        self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                            actions.append(unit.move(dest))
+
+                    else :
+                        enemy_banshee = self.known_enemy_units(UnitTypeId.BANSHEE)
+                        
+                        if enemy_banshee.exists :
+                            banshee_in_raven = enemy_banshee.closer_than(9.5, unit)
+                            #print(banshee_in_raven)
+                            if banshee_in_raven.amount / enemy_banshee.amount >= 0.5 :
+                                actions.append(unit.move(self.cc))
+                            else :
+                                #print("???")
+                                actions.append(unit.move(enemy_banshee.closest_to(unit).position))
+                        elif self.units.not_structure.exists:  # 전투그룹 중앙 대기
+                            actions.append(unit.move(self.my_groups[0].center))
 
             # 지게로봇
             # 에너지 50을 사용하여 소환
