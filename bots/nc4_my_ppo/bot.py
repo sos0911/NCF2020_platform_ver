@@ -430,8 +430,7 @@ class Bot(sc2.BotAI):
 
     # 무빙샷
     def moving_shot(self, actions, unit, cooldown, target_func, margin_health: float = 0, minimum: float = 0):
-        if unit.type_id is UnitTypeId.MARAUDER:
-            print("WEAPON COOLDOWN : ", unit.weapon_cooldown)
+        # print("WEAPON COOLDOWN : ", unit.weapon_cooldown)
         if unit.weapon_cooldown < cooldown:
             target = target_func(unit)
             if self.time - self.evoked.get((unit.tag, "COOLDOWN"), 0.0) >= minimum:
