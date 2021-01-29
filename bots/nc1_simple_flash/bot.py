@@ -123,7 +123,6 @@ class Bot(sc2.BotAI):
                     # 이동!
                     dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
                                    self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
-                    print(self.time, " : ", dest)
                     actions.append(unit.move(dest))
 
         return actions

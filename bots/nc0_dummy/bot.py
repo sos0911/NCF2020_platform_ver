@@ -57,10 +57,8 @@ class Bot(sc2.BotAI):
             if self.time - self.evoked.get((cc.tag, 'train'), 0) > 1.0 and self.evoked.get("train", 0) < 2:
                 # 해당 유닛 생산 가능하고, 마지막 명령을 발행한지 1초 이상 지났음
                 if self.build_order[0] == UnitTypeId.MULE:
-                    print("1")
                     if self.cc.energy >= 50:
                     #if self.can_cast(self.cc, AbilityId.CALLDOWNMULE_CALLDOWNMULE):
-                        print("2")
                         mule_summon_point = await self.find_placement(UnitTypeId.COMMANDCENTER, self.cc.position)
                         # MULE 소환
                         actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
