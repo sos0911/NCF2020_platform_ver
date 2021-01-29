@@ -48,7 +48,6 @@ class Bot(sc2.BotAI):
 
         self.first_banshee = True
 
-        self.tmp_attacking = False
 
         self.my_groups = []
 
@@ -183,6 +182,32 @@ class Bot(sc2.BotAI):
 
         return ret_groups
 
+    def select_mode(self, unit):
+        # 정찰중인 벌쳐는 제외
+
+        # 밴시, 밤까마귀, 지게로봇 제외
+        if unit.type_id is UnitTypeId.BANSHEE or unit.type_id is UnitTypeId.MULE or unit.type_id is UnitTypeId.RAVEN :
+            #self.evoked[(unit.tag, "offense_mode")] = False
+            return None
+        # 방어모드일때 공격모드로 전환될지 트리거 세팅
+        # 방어모드라면 False, 공격모드로 바뀐다면 True return
+
+        ground_targets = self.known_enemy_units.filter(
+                lambda u: unit.distance_to(u) <= max(unit.ground_range + 2, unit.air_range + 2) and u.is_visible
+                    and not u.is_flying)
+        air_targets = self.known_enemy_units.filter(
+                lambda u: unit.distance_to(u) <= max(unit.ground_range + 2, unit.air_range + 2) and u.is_visible
+                    and u.is_flying)
+
+        if ground_targets.exists and air_targets.exists :
+            return "All"
+        elif ground_targets.exists :
+            return "Ground"
+        elif air_targets.exists :
+            return "Air"
+        else :
+            return None
+
     async def on_step(self, iteration: int):
 
         actions = list()
@@ -274,15 +299,59 @@ class Bot(sc2.BotAI):
                 else:
                     break
 
+        '''
         closest_dist = 500
-
-        if not self.known_enemy_units.filter(lambda e: e.is_visible).empty:
+        enemies = self.known_enemy_units.filter(lambda e: e.is_visible)
+        if not enemies.empty:
             for our_unit in self.units:
-                if our_unit.type_id is UnitTypeId.BANSHEE : # 밴시는 생략
+                if our_unit.type_id is UnitTypeId.BANSHEE :
                     continue
-                temp = self.known_enemy_units.filter(lambda e : e.is_visible).closest_distance_to(our_unit)
+                temp = enemies.closest_distance_to(our_unit)
                 if temp < closest_dist:
                     closest_dist = temp
+        '''
+
+        ground_attack = False
+        air_attack = False
+
+        for unit in self.units.not_structure:
+            who_attack = self.select_mode(unit)
+
+            if ground_attack and air_attack :
+                break
+
+            if who_attack == "All":      
+                # 모든 유닛이 트리거 작동
+                ground_attack = True
+                air_attack = True
+
+            elif who_attack == "Ground" :
+                # 지상 공격 가능한 유닛만
+                ground_attack = True
+
+            elif who_attack == "Air" :
+                # 공중 공격 가능한 유닛만
+                air_attack = True
+                
+        
+        if ground_attack and air_attack :
+            self.offense_mode = True
+            for unit in self.units.not_structure:
+                self.evoked[(unit.tag, "offense_mode")] = True
+        
+        elif ground_attack :
+            self.offense_mode = True
+            for unit in self.units.not_structure.filter(lambda u : u.can_attack_ground or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGFIGHTER]):
+                self.evoked[(unit.tag, "offense_mode")] = True
+        
+        elif air_attack :
+            self.offense_mode = True
+            for unit in self.units.not_structure.filter(lambda u : u.can_attack_air or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGASSAULT]):
+                self.evoked[(unit.tag, "offense_mode")] = True
+        else :
+            for unit in self.units.not_structure :
+                self.evoked[(unit.tag, "offense_mode")] = False
+                self.offense_mode = False
 
         #print(closest_dist)
 
@@ -310,20 +379,16 @@ class Bot(sc2.BotAI):
                         is_attacked = True
                         break
 
-                if self.attacking == False and (closest_dist > 7.0 and not is_attacked):
-                    self.tmp_attacking = False
+                if self.attacking == False and (not self.evoked.get((unit.tag, "offense_mode"), False) and not is_attacked):
 
                     if unit.type_id is UnitTypeId.MARINE and self.known_enemy_units(UnitTypeId.BANSHEE).filter(lambda e : not e.is_visible) :
                         actions.append(unit.attack(self.escape_point))
                     else :   
                         actions.append(unit.attack(self.rally_point))
-                else:
-                    self.tmp_attacking = True
-                    #actions.append(unit.attack(target))
 
 
             if unit.type_id is UnitTypeId.MARINE :
-                if (self.attacking == True or self.tmp_attacking) :
+                if (self.attacking == True or self.evoked.get((unit.tag, "offense_mode"), False)) :
                     actions.append(unit.attack(target))
                     if unit.distance_to(target) < 15 and self.known_enemy_units.amount >= 3:
                         # 해병과 목표의 거리가 15이하일 경우 스팀팩 사용
@@ -364,7 +429,7 @@ class Bot(sc2.BotAI):
                 '''
 
                 # 클락이거나 클락이 가능하면 attacking 
-                if unit.has_buff(BuffId.BANSHEECLOAK) or unit.energy >= 50 :
+                if unit.has_buff(BuffId.BANSHEECLOAK) or unit.energy >= 50 or self.attacking or self.evoked.get((unit.tag, "offense_mode"), False):
 
                     def target_func(unit):
                         enemy_tanks = self.known_enemy_units.filter(
@@ -397,7 +462,7 @@ class Bot(sc2.BotAI):
             ## BATTLECRUISER ##
             if unit.type_id is UnitTypeId.BATTLECRUISER:
 
-                if (self.attacking == True or self.tmp_attacking):
+                if (self.attacking == True or self.evoked.get((unit.tag, "offense_mode"), False)):
                     def yamato_target_func(unit):
                         # 야마토 포 상대 지정
                         # 일정 범위 내 적들에 한해 적용
@@ -444,7 +509,7 @@ class Bot(sc2.BotAI):
             if unit.type_id is UnitTypeId.RAVEN:
                 #print("RAVEN")
 
-                if unit.distance_to(target) < 15 and unit.energy > 75 and (self.attacking == True or self.tmp_attacking):  # 적들이 근처에 있고 마나도 있으면
+                if unit.distance_to(target) < 15 and unit.energy > 75 and (self.attacking == True or self.evoked.get((unit.tag, "offense_mode"), False)):  # 적들이 근처에 있고 마나도 있으면
                     known_only_enemy_units = self.known_enemy_units.not_structure
                     if known_only_enemy_units.exists:  # 보이는 적이 있다면
                         enemy_amount = known_only_enemy_units.amount

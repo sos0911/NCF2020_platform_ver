@@ -37,20 +37,28 @@ class Bot(sc2.BotAI):
         """
         self.build_order = list()
         self.evoked = dict()
+        self.my_raven = False
         self.maybe_battle = False
 
+        self.map_height = 63
+        self.map_width = 128
+
+        self.train_raven = False
         self.attacking = False
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first
-
         self.tmp_attacking = False
+
+        self.my_groups = []
 
         # (32.5, 31.5) or (95.5, 31.5)
         if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0:
             self.enemy_cc = Point2(Point2((95.5, 31.5)))  # 적 시작 위치
             self.rally_point = Point2(Point2((47.5, 31.5)))
+            self.escape_point = Point2(Point2((30.5, 31.5)))
         else:
             self.enemy_cc = Point2(Point2((32.5, 31.5)))  # 적 시작 위치
             self.rally_point = Point2(Point2((80.5, 31.5)))
+            self.escape_point = Point2(Point2((97.5, 31.5)))
 
     def unit_groups(self):
         groups = []

@@ -45,16 +45,17 @@ class Bot(sc2.BotAI):
         self.attacking = False
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first
 
-        self.tmp_attacking = False
         self.my_groups = []
 
         # (32.5, 31.5) or (95.5, 31.5)
         if self.start_location.distance_to(Point2((32.5, 31.5))) < 5.0:
             self.enemy_cc = Point2(Point2((95.5, 31.5)))  # 적 시작 위치
             self.rally_point = Point2(Point2((47.5, 31.5)))
+            self.escape_point = Point2(Point2((30.5, 31.5)))
         else:
             self.enemy_cc = Point2(Point2((32.5, 31.5)))  # 적 시작 위치
-            self.rally_point = Point2(Point2((92.5, 31.5)))
+            self.rally_point = Point2(Point2((80.5, 31.5)))
+            self.escape_point = Point2(Point2((97.5, 31.5)))
 
         self.build_banshee = False
 
@@ -252,6 +253,32 @@ class Bot(sc2.BotAI):
 
         return ret_groups
 
+    def select_mode(self, unit):
+        # 정찰중인 벌쳐는 제외
+
+        # 밴시, 밤까마귀, 지게로봇 제외
+        if unit.type_id is UnitTypeId.BANSHEE or unit.type_id is UnitTypeId.MULE or unit.type_id is UnitTypeId.RAVEN :
+            #self.evoked[(unit.tag, "offense_mode")] = False
+            return None
+        # 방어모드일때 공격모드로 전환될지 트리거 세팅
+        # 방어모드라면 False, 공격모드로 바뀐다면 True return
+
+        ground_targets = self.known_enemy_units.filter(
+                lambda u: unit.distance_to(u) <= max(unit.ground_range + 2, unit.air_range + 2) and u.is_visible
+                    and not u.is_flying)
+        air_targets = self.known_enemy_units.filter(
+                lambda u: unit.distance_to(u) <= max(unit.ground_range + 2, unit.air_range + 2) and u.is_visible
+                    and u.is_flying)
+
+        if ground_targets.exists and air_targets.exists :
+            return "All"
+        elif ground_targets.exists :
+            return "Ground"
+        elif air_targets.exists :
+            return "Air"
+        else :
+            return None
+
     async def on_step(self, iteration: int):       
         actions = list()
 
@@ -364,14 +391,58 @@ class Bot(sc2.BotAI):
                     actions.append(self.cc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, mule_summon_point))
                 else:
                     break
-
+        '''
         closest_dist = 500
-
-        if not self.known_enemy_units.filter(lambda e: e.is_visible).empty:
+        enemies = self.known_enemy_units.filter(lambda e: e.is_visible)
+        if not enemies.empty:
             for our_unit in self.units:
-                temp = self.known_enemy_units.closest_distance_to(our_unit)
+                if our_unit.type_id is UnitTypeId.BANSHEE :
+                    continue
+                temp = enemies.closest_distance_to(our_unit)
                 if temp < closest_dist:
                     closest_dist = temp
+        '''
+        ground_attack = False
+        air_attack = False
+
+        for unit in self.units.not_structure:
+            who_attack = self.select_mode(unit)
+
+            if ground_attack and air_attack :
+                break
+
+            if who_attack == "All":      
+                # 모든 유닛이 트리거 작동
+                ground_attack = True
+                air_attack = True
+
+            elif who_attack == "Ground" :
+                # 지상 공격 가능한 유닛만
+                ground_attack = True
+
+            elif who_attack == "Air" :
+                # 공중 공격 가능한 유닛만
+                air_attack = True
+                
+        
+        if ground_attack and air_attack :
+            self.offense_mode = True
+            for unit in self.units.not_structure:
+                self.evoked[(unit.tag, "offense_mode")] = True
+        
+        elif ground_attack :
+            self.offense_mode = True
+            for unit in self.units.not_structure.filter(lambda u : u.can_attack_ground or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGFIGHTER]):
+                self.evoked[(unit.tag, "offense_mode")] = True
+        
+        elif air_attack :
+            self.offense_mode = True
+            for unit in self.units.not_structure.filter(lambda u : u.can_attack_air or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGASSAULT]):
+                self.evoked[(unit.tag, "offense_mode")] = True
+        else :
+            for unit in self.units.not_structure :
+                self.evoked[(unit.tag, "offense_mode")] = False
+                self.offense_mode = False
 
         # 1등 코드가, 밤까마귀로 하여금 무조건 클라킹한 밴시만 따라다니도록 한다;;
         enemy_banshees = self.known_enemy_units.filter(lambda u: u.type_id is UnitTypeId.BANSHEE)
@@ -395,20 +466,16 @@ class Bot(sc2.BotAI):
                         is_attacked = True
                         break
 
-                if self.attacking == False and (closest_dist > 7.0 and not is_attacked):
-                    self.tmp_attacking = False
+                if self.attacking == False and (not self.evoked.get((unit.tag, "offense_mode"), False) and not is_attacked):
 
                     if unit.type_id is UnitTypeId.MARINE and self.known_enemy_units(UnitTypeId.BANSHEE).filter(lambda e : not e.is_visible) :
                         actions.append(unit.attack(self.escape_point))
                     else :   
                         actions.append(unit.attack(self.rally_point))
-                else:
-                    self.tmp_attacking = True
-                    #actions.append(unit.attack(target))
 
             if unit.type_id is UnitTypeId.HELLION:
                     # 정찰용 화염차여도 공격 정책일 때는 공격해야 한다.
-                if (self.attacking == True or self.tmp_attacking):
+                if (self.attacking == True or self.evoked.get((unit.tag, "offense_mode"), False)):
 
                     def target_func(unit):
                         # 경장갑 우선 타겟팅
@@ -428,60 +495,60 @@ class Bot(sc2.BotAI):
 
                     actions = self.moving_shot(actions, unit, 10, target_func)
 
-                    if unit.type_id is UnitTypeId.BANSHEE:
+            if unit.type_id is UnitTypeId.BANSHEE:
 
-                        # 아래 내용은 공격 정책이거나 offense mode가 아닐 시에도 항시 적용됨
-                        threats = self.select_threat(unit)
+                # 아래 내용은 공격 정책이거나 offense mode가 아닐 시에도 항시 적용됨
+                threats = self.select_threat(unit)
 
-                        # clock_threats = self.cached_known_enemy_units.filter(
-                        #     lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
+                # clock_threats = self.cached_known_enemy_units.filter(
+                #     lambda u: u.type_id is UnitTypeId.RAVEN and unit.distance_to(u) <= u.sight_range)
 
-                        # 근처에 위협이 존재할 시 클라킹
-                        # 하지만 정찰 유닛(마린 1기)만 있을 시에는 클라킹을 하지 않는다.
-                        # 이 경우는 하는 것이 손해!
-                        if not threats.empty and not (threats.amount == 1 and threats.first.type_id == UnitTypeId.MARINE) and \
-                                not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.2:
-                            actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
+                # 근처에 위협이 존재할 시 클라킹
+                # 하지만 정찰 유닛(마린 1기)만 있을 시에는 클라킹을 하지 않는다.
+                # 이 경우는 하는 것이 손해!
+                if not threats.empty and not (threats.amount == 1 and threats.first.type_id == UnitTypeId.MARINE) and \
+                        not unit.has_buff(BuffId.BANSHEECLOAK) and unit.energy_percentage >= 0.2:
+                    actions.append(unit(AbilityId.BEHAVIOR_CLOAKON_BANSHEE))
 
-                        # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
-                        '''
-                        if not threats.empty:
-                            self.evoked[(unit.tag, "BANSHEE_CLOAK")] = self.time
-        
-                        if threats.empty and self.time - self.evoked.get((unit.tag, "BANSHEE_CLOAK"), 0.0) >= 10 \
-                                and unit.has_buff(BuffId.BANSHEECLOAK):
-                            actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
-                        '''
+                # 만약 주위에 아무도 자길 때릴 수 없으면 클락을 풀어 마나보충
+                '''
+                if not threats.empty:
+                    self.evoked[(unit.tag, "BANSHEE_CLOAK")] = self.time
 
-                        # 클락이거나 클락이 가능하면 attacking
-                        if unit.has_buff(BuffId.BANSHEECLOAK) or unit.energy >= 50 :
+                if threats.empty and self.time - self.evoked.get((unit.tag, "BANSHEE_CLOAK"), 0.0) >= 10 \
+                        and unit.has_buff(BuffId.BANSHEECLOAK):
+                    actions.append(unit(AbilityId.BEHAVIOR_CLOAKOFF_BANSHEE))
+                '''
 
-                            def target_func(unit):
-                                enemy_tanks = self.known_enemy_units.filter(
-                                    lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
-                                if enemy_tanks.amount > 0:
-                                    target = enemy_tanks.closest_to(unit.position)
-                                    return target
-                                # 만약 탱크가 없다면 HP가 가장 적으면서 가까운 아무 지상 유닛이나, 그것도 없다면 커맨드 직행
-                                else:
-                                    targets = self.known_enemy_units.filter(
-                                        lambda u: u.type_id is not UnitTypeId.COMMANDCENTER and not u.is_flying)
-                                    max_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2)
-                                    if not targets.empty:
-                                        target = targets.sorted(lambda u: u.health_percentage + unit.distance_to(u) / max_dist)[0]
-                                        return target
-                                    else:
-                                        return self.enemy_cc
+                # 클락이거나 클락이 가능하면 attacking 
+                if unit.has_buff(BuffId.BANSHEECLOAK) or unit.energy >= 50 or self.attacking or self.evoked.get((unit.tag, "offense_mode"), False):
 
-                            # 공격
-                            # 은신 상태이면서 밤까마귀가 감지하고 있지 않으면 그냥 공격
-                            # 그 상태가 아니라면 무빙샷.
-                            # TODO : 은신이 감지되고 있는지 확인이 불가함. CloakState 작동 불가
-                            # 무빙샷 함수 안에 cloak에 대한 예외처리도 되어 있다.
-                            actions = self.moving_shot(actions, unit, 5, target_func)
-
+                    def target_func(unit):
+                        enemy_tanks = self.known_enemy_units.filter(
+                            lambda u: u.type_id is UnitTypeId.SIEGETANK or u.type_id is UnitTypeId.SIEGETANKSIEGED)
+                        if enemy_tanks.amount > 0:
+                            target = enemy_tanks.closest_to(unit.position)
+                            return target
+                        # 만약 탱크가 없다면 HP가 가장 적으면서 가까운 아무 지상 유닛이나, 그것도 없다면 커맨드 직행
                         else:
-                            actions.append(unit.attack(self.cc.position))
+                            targets = self.known_enemy_units.filter(
+                                lambda u: u.type_id is not UnitTypeId.COMMANDCENTER and not u.is_flying)
+                            max_dist = math.sqrt(self.map_height ** 2 + self.map_width ** 2)
+                            if not targets.empty:
+                                target = targets.sorted(lambda u: u.health_percentage + unit.distance_to(u) / max_dist)[0]
+                                return target
+                            else:
+                                return self.enemy_cc
+
+                    # 공격
+                    # 은신 상태이면서 밤까마귀가 감지하고 있지 않으면 그냥 공격
+                    # 그 상태가 아니라면 무빙샷.
+                    # TODO : 은신이 감지되고 있는지 확인이 불가함. CloakState 작동 불가
+                    # 무빙샷 함수 안에 cloak에 대한 예외처리도 되어 있다.
+                    actions = self.moving_shot(actions, unit, 5, target_func)
+
+                else:
+                    actions.append(unit.attack(self.cc.position))
 
             # 바이킹 전투기 모드(공중)
             if unit.type_id is UnitTypeId.VIKINGFIGHTER:
@@ -492,7 +559,7 @@ class Bot(sc2.BotAI):
                 # 우선순위 2. 1이 해당되는 놈들이 없다면(적의 공중 유닛이 없다면) 탱크 중 가장 hp 없는 놈 바로 아래에 내려서 공격
                 # 탱크가 없다면 주위 임의의 지상 유닛을 때린다.
                 # 우선순위 3. 1,2가 해당되지 않는다면 바로 커맨드로 가서 변환 후 때리기
-                if self.attacking == True or self.tmp_attacking:
+                if self.attacking or self.evoked.get((unit.tag, "offense_mode"), False):
                     # 랜딩 flag initiate
                     if self.evoked.get((unit.tag, "prepare_landing"), None) is None:
                         self.evoked[(unit.tag, "prepare_landing")] = False
@@ -532,8 +599,8 @@ class Bot(sc2.BotAI):
                             landing_loc = self.evoked.get((unit.tag, "landing_loc"), None)
                             if self.evoked.get((unit.tag, "prepare_landing")) and \
                                     (landing_loc is None or (landing_loc is not None and \
-                            (not (9 <= ground_targets.closest_distance_to(landing_loc) <= 15) or \
-                             not await self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc)))):
+                            (not (ground_targets.closest_distance_to(landing_loc) >= 9 and ground_targets.closest_distance_to(landing_loc) <= 15) or \
+                            not await self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc)))):
                                 dist = random.randint(8, 10)
                                 dist_x = random.randint(7, dist)
                                 dist_y = math.sqrt(dist ** 2 - dist_x ** 2) \
@@ -579,7 +646,7 @@ class Bot(sc2.BotAI):
                 if not enemy_air.empty or ground_enemy_units.empty:
                     actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
 
-                if self.attacking or self.tmp_attacking :
+                if self.attacking or self.evoked.get((unit.tag, "offense_mode"), False) :
                     # 1. 적 지상유닛 중 가장 가까운 기계부터 공격
                     # 기계가 없으면 기타 나머지 중 가까운 놈부터
                     # 2. 적 커맨드
@@ -604,15 +671,18 @@ class Bot(sc2.BotAI):
 
             # RAVEN
             if unit.type_id is UnitTypeId.RAVEN:
-                #print("RAVEN")
+                # print("RAVEN")
 
-                if unit.distance_to(target) < 15 and unit.energy > 75 and (self.attacking == True or self.tmp_attacking):  # 적들이 근처에 있고 마나도 있으면
+                if unit.distance_to(target) < 15 and unit.energy > 75 and (
+                        self.attacking == True or self.evoked.get((unit.tag, "offense_mode"),
+                                                                  False)):  # 적들이 근처에 있고 마나도 있으면
                     known_only_enemy_units = self.known_enemy_units.not_structure
                     if known_only_enemy_units.exists:  # 보이는 적이 있다면
                         enemy_amount = known_only_enemy_units.amount
                         not_antiarmor_enemy = known_only_enemy_units.filter(
                             # anitarmor가 아니면서 가능대상에서 1초가 지났을 때...
-                            lambda unit: self.time - self.evoked.get((unit.tag, "ANTIARMOR_POSSIBLE"), 0) >= 1.0
+                            lambda unit: self.time - self.evoked.get((unit.tag, "ANTIARMOR_POSSIBLE"),
+                                                                     0) >= 1.0
                             # (not unit.has_buff(BuffId.RAVENSHREDDERMISSILEARMORREDUCTION)) and
                         )
                         not_antiarmor_enemy_amount = not_antiarmor_enemy.amount
@@ -620,7 +690,8 @@ class Bot(sc2.BotAI):
                         if not_antiarmor_enemy_amount / enemy_amount > 0.5:  # 안티아머 걸리지 않은게 절반 이상이면 미사일 쏘기 center에
                             enemy_center = not_antiarmor_enemy.center
                             select_unit = not_antiarmor_enemy.closest_to(enemy_center)
-                            possible_units = known_only_enemy_units.closer_than(3, select_unit)  # 안티아머 걸릴 수 있는 애들
+                            possible_units = known_only_enemy_units.closer_than(3,
+                                                                                select_unit)  # 안티아머 걸릴 수 있는 애들
 
                             for punit in possible_units:
                                 self.evoked[(punit.tag, "ANTIARMOR_POSSIBLE")] = self.time
@@ -634,8 +705,8 @@ class Bot(sc2.BotAI):
                                         BuffId.RAVENSCRAMBLERMISSILE):  # 기계이고 락다운 안걸려있으면 (robotic은 로봇)
                                     actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
                     # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
-                else :
-                    threats = self.select_threat(unit) # 위협이 있으면 ㅌㅌ
+                else:
+                    threats = self.select_threat(unit)  # 위협이 있으면 ㅌㅌ
                     if not threats.empty:
                         maxrange = 0
                         total_move_vector = Point2((0, 0))
@@ -653,24 +724,25 @@ class Bot(sc2.BotAI):
                                 move_vector *= (eunit.air_range + 3 - unit.distance_to(eunit)) * 1.5
                                 total_move_vector += move_vector
 
-                    
-                            total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                            total_move_vector /= math.sqrt(
+                                total_move_vector.x ** 2 + total_move_vector.y ** 2)
                             total_move_vector *= maxrange
                             # 이동!
-                            dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
-                                        self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
+                            dest = Point2(
+                                (self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                 self.clamp(unit.position.y + total_move_vector.y, 0, self.map_height)))
                             actions.append(unit.move(dest))
 
-                    else :
+                    else:
                         enemy_banshee = self.known_enemy_units(UnitTypeId.BANSHEE)
-                        
-                        if enemy_banshee.exists :
+
+                        if enemy_banshee.exists:
                             banshee_in_raven = enemy_banshee.closer_than(9.5, unit)
-                            #print(banshee_in_raven)
-                            if banshee_in_raven.amount / enemy_banshee.amount >= 0.5 :
+                            # print(banshee_in_raven)
+                            if banshee_in_raven.amount / enemy_banshee.amount >= 0.5:
                                 actions.append(unit.move(self.cc))
-                            else :
-                                #print("???")
+                            else:
+                                # print("???")
                                 actions.append(unit.move(enemy_banshee.closest_to(unit).position))
                         elif self.units.not_structure.exists:  # 전투그룹 중앙 대기
                             actions.append(unit.move(self.my_groups[0].center))
