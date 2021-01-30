@@ -21,6 +21,7 @@ from sc2.sc2process import SC2Process
 from termcolor import cprint
 import numpy as np
 from IPython import embed
+from sc2.data import Result
 
 #from ..nc3_simple3.bot import Bot as OppBot
 from ..nc4_simple_ppo.bot import Bot as Opp2Bot
@@ -68,6 +69,13 @@ class Environment:
         self.context = zmq.Context()
         self.sock = self.context.socket(zmq.REP)
 
+        self.pool = set(["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
+                                "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlashFast", "OppBotMagic"])
+
+        self.win = dict()
+        for p in self.pool :
+            self.win[p] = []
+
         if platform.system() == 'Windows':
             # Windows에서는 Process기반 queue device 실행
             # 다른 프로토콜 사용 불가능
@@ -108,8 +116,12 @@ class Environment:
             return cmd, game_id, state, 0.0, False, dict()
 
         elif cmd == CommandType.SCORE:  # actor에서 게임 점수 전달 --> finish
-            game_id = pickle.loads(msg[0])
-            score = pickle.loads(msg[1])
+            name = pickle.loads(msg[0])
+            game_id = pickle.loads(msg[1])
+            score = pickle.loads(msg[2])
+
+            self.win[name].append(score/2 + 0.5)
+            #print(name, score)
             return cmd, game_id, None, score, True, dict()
 
         elif cmd == CommandType.REQ_TASK:  # actor에서 게임 세팅 요청 --> set_task
@@ -127,11 +139,12 @@ class Environment:
         self.sock.send_multipart([CommandType.PING])
 
     def set_task(self, task_dict):
-        self.sock.send_multipart([pickle.dumps(task_dict)])
+        self.sock.send_multipart([pickle.dumps(task_dict), pickle.dumps(self.win)])
 
 class Actor:
     def __init__(self, args):
         self.args = args
+
 
     def run(self, _id: int, verbose: bool=False, timeout: int=60000, n_games: int=100):
         # hostname = f"{socket.gethostname()}_{time.ctime().replace(' ', '-')}"
@@ -306,15 +319,18 @@ class Actor:
             step_time_limit=None,
             game_time_limit=None, 
             rgb_render_config=None, 
-            random_seed=None,
+            random_seed=None
         ):
 
         async with SC2Process(render=rgb_render_config is not None) as server:
             try:
-                for _ in range(n_games):
+                for j in range(n_games):
                     # Learner에게 다음에 실행할 게임 세팅을 요청
                     sock.send_multipart([CommandType.REQ_TASK])
-                    task_dict.update(pickle.loads(sock.recv_multipart()[0]))
+
+                    tmp = sock.recv_multipart()
+                    task_dict.update(pickle.loads(tmp[0]))
+
                     # 게임 세팅 설정
                     # !주의!: join쪽 task_dict, players와 동일한 인스턴스를 유지해야 하기 때문에,
                     # 절대 여기서 새로 생성하지 말고 업데이트만 해야함, 
@@ -324,16 +340,40 @@ class Actor:
                     # pool
                     # set으로 중복 방지
                     # pool은 opp2bot 1개 + (배틀,밤까) 봇 1개 + 배틀 봇 1개 + 탱크 봇 1개 + 밴시 봇 1개 + 타 팀 봇(flash/magic) 6개 + pool 4개 = max 15개의 봇으로 구성
+                    # pool = ["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
+                    #            "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlash", "OppBotFlashFast", "OppBotFlashFast", "OppBotMagic", "OppBotMagic"]
                     pool = ["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
-                                "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlash", "OppBotFlashFast", "OppBotFlashFast", "OppBotMagic", "OppBotMagic"]
-                    for i in range(1, 5):
+                                "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlashFast", "OppBotMagic"]
+                    for i in range(1, 4):
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
                         if os.path.isfile(model_path):
                             pool.append(str(i))
 
-                    players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock))
+                    win = pickle.loads(tmp[1])
 
-                    bot_str = sample(pool, 1)[0]
+                    rates = []
+                    # 뽑을 확률 설정
+                    probs = np.repeat(0.5 / len(pool), len(pool))
+
+                    for p in pool :
+                        win_tmp = win[p]
+
+                        if len(win_tmp) > 10 :
+                            win_tmp = win[-10:-1]
+                        if not win_tmp : # 비어있으면 => 게임 한판도 안했으면
+                            rates.append(1 - 1 / len(pool))
+                        else :
+                            rates.append(1 - np.mean(win[p]))
+
+                    for i, rate in enumerate(rates) :
+                        prob = (rate / np.sum(rates) / 2)
+                        probs[i] = probs[i] + prob
+
+                    bot_str = list(np.random.choice(pool, 1, False, probs))[0]
+
+                    players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock, bot_str))
+
+                    
                     if bot_str == "Opp2Bot" :
                         players[1] = _Bot(Race.Terran, Opp2Bot())
                     elif bot_str == "OppBotBattle" :
@@ -351,7 +391,7 @@ class Actor:
                     elif bot_str == "OppBotMagic" :
                         players[1] = _Bot(Race.Terran, OppBotMagic())
                     else :
-                        players[1] = _Bot(Race.Terran, MyBot(step_interval, hostname, None, bot_str))
+                        players[1] = _Bot(Race.Terran, MyBot(step_interval, hostname, None, None, bot_str))
 
                     # 게임 세팅이 완료되면 event를 set해서 join 쪽도 다음 과정을 진행하도록 함
                     aio_event.set()
@@ -369,6 +409,12 @@ class Actor:
                     )
 
                     # Result.Defeat, Result.Tie, Result.Victory
+                    #if result == Result.Defeat :
+                    #    self.win[bot_str].append(-1)
+                    #elif result == Result.Tie :
+                    #    self.win[bot_str].append(0)
+                    #elif result == Result.Victory :
+                    #    self.win[bot_str].append(1)
                     # print(result)
 
                     if save_replay_as is not None:

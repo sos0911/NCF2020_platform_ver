@@ -79,21 +79,22 @@ class Bot(sc2.BotAI):
     example v1과 유사하지만, 빌드 오더 대신, 유닛 비율을 맞추도록 유닛을 생산함
     """
 
-    def __init__(self, step_interval=5.0, host_name='', sock=None, version=""):
+    def __init__(self, step_interval=5.0, host_name='', sock=None, name=None, version=""):
         super().__init__()
         self.step_interval = step_interval
         self.host_name = host_name
         self.sock = sock
+        self.name = name
         ## donghyun edited ##
         if sock is None:
             try:
-                self.model = Model()
                 # gpu
+                self.model = Model()
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
-                self.model.load_state_dict(torch.load(model_path)) # gpu
+                self.model.load_state_dict(torch.load(model_path))
                 self.model.to(torch.device("cuda"))
                 # cpu
-                #self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+                # self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()
@@ -1924,7 +1925,8 @@ class Bot(sc2.BotAI):
             score = 1. if game_result is Result.Victory else -1.
             self.sock.send_multipart((
                 CommandType.SCORE,
+                pickle.dumps(self.name),
                 pickle.dumps(self.game_id),
-                pickle.dumps(score),
+                pickle.dumps(score)
             ))
             self.sock.recv_multipart()
