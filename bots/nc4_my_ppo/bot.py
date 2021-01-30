@@ -88,9 +88,12 @@ class Bot(sc2.BotAI):
         if sock is None:
             try:
                 self.model = Model()
+                # gpu
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
-                #self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cuda'))) # gpu
-                self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'))) # cpu
+                self.model.load_state_dict(torch.load(model_path)) # gpu
+                self.model.to(torch.device("cuda"))
+                # cpu
+                #self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()

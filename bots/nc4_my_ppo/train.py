@@ -136,21 +136,22 @@ class Trainer:
         self.args = args
         self.device = args.device
         self.model = Model().to(self.device)
-        # parameter for model save
-        # 현재 score가 일정 수치를 넘어 model save가 되면 False로 바뀐다.
-        # 다시 score가 일정 수치 이하로 내려가면 True로 바뀐다.
-        self.possible_model_save = True
 
-        
-        # 만약 model.pt가 있다면, model load
+        # 만약 model.pt가 있다면, model / optimizer load
         # 이전에 학습된 모델이라고 가정한다.
         model_path = Path(__file__).parent / 'model.pt'
         if os.path.isfile(model_path):
             # checkpoint = torch.load(model_path, map_location=torch.device('cuda')) # gpu
-            checkpoint = torch.load(model_path, map_location=torch.device('cpu')) # cpu
+            # checkpoint = torch.load(model_path, map_location=torch.device('cpu'))  # cpu
+            checkpoint = torch.load(model_path)  # gpu environment
             self.model.load_state_dict(checkpoint)
+            self.model.to(self.device)
             # model load end
-        
+
+        # parameter for model save
+        # 현재 score가 일정 수치를 넘어 model save가 되면 False로 바뀐다.
+        # 다시 score가 일정 수치 이하로 내려가면 True로 바뀐다.
+        self.possible_model_save = True
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.lr, amsgrad=True)
         self.writer = SummaryWriter()
@@ -163,6 +164,7 @@ class Trainer:
         self.mean_score = -1
         self.mybot_version = None
         self.bot_cache_path = Path(__file__).parent / ('bot_cache.txt')
+
         # version 파일이 있다면 내용을 가져오기.
         if os.path.isfile(self.bot_cache_path):
             with open(self.bot_cache_path, 'r') as cache_reader:
