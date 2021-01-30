@@ -51,7 +51,7 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         # wonseok add #
-        self.fc1 = nn.Linear(6 + (len(EconomyStrategy) * 2) + 2, 128)
+        self.fc1 = nn.Linear(5 + (len(EconomyStrategy) * 2) + 2, 128)
         # wonseok end #
         self.norm1 = nn.LayerNorm(128)
         self.fc2 = nn.Linear(128, 128)
@@ -301,7 +301,7 @@ class Bot(sc2.BotAI):
 
         # 일반 state 요소 개수
         # 이를 편집한다면 Model의 init 함수에서도 input size 변경 필수!
-        remain_state_cnt = 6
+        remain_state_cnt = 5
 
         # 아군 핵 보유 상태를 기록 +1
         # 아군 offense_mode 기록 +1
@@ -310,7 +310,7 @@ class Bot(sc2.BotAI):
         state[0] = self.cc.health_percentage
         # 적 커맨드 HP 상황
         # snapshot으로 남아 있을 때는 마지막으로 확인된 HP를 사용
-        state[1] = self.enemy_cc_health_percentage
+        # state[1] = self.enemy_cc_health_percentage
 
         state[2] = max(1, self.minerals / 1000)
         state[3] = max(1, self.vespene / 1000)
@@ -388,7 +388,7 @@ class Bot(sc2.BotAI):
 
         # 밤까마귀 하드코딩
         self.train_raven = False
-        if not self.units(UnitTypeId.RAVEN).empty:
+        if self.units(UnitTypeId.RAVEN).empty:
             # self.enemy_exists는 [unit.tag] 키를 가짐
             for eunit_type_id in self.enemy_exists.values():
                 if eunit_type_id in [UnitTypeId.GHOST, UnitTypeId.BANSHEE]:
@@ -398,11 +398,10 @@ class Bot(sc2.BotAI):
         if self.train_raven:
             if self.vespene >= 175:
                 self.next_unit = UnitTypeId.RAVEN
-            elif self.next_unit in [UnitTypeId.MARAUDER, UnitTypeId.GHOST, UnitTypeId.BATTLECRUISER, UnitTypeId.SIEGETANK, UnitTypeId.REAPER,\
+            elif self.next_unit in [UnitTypeId.MARAUDER, UnitTypeId.GHOST, UnitTypeId.BATTLECRUISER,
+                                    UnitTypeId.SIEGETANK, UnitTypeId.REAPER, \
                                     UnitTypeId.THOR, UnitTypeId.VIKINGFIGHTER, UnitTypeId.BANSHEE, UnitTypeId.NUKE]:
-                self.next_unit = UnitTypeId.RAVEN
-
-
+                self.next_unit = None
 
         # MULE 생산은 하드코딩으로 대체한다.
         # 커맨드 체력 정도에 따라 MULE이 원하는 숫자보다 적으면 생산
