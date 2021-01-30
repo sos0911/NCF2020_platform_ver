@@ -120,7 +120,9 @@ class Environment:
             game_id = pickle.loads(msg[1])
             score = pickle.loads(msg[2])
 
-            self.win[name].append(score/2 + 0.5)
+            self.win[name].append(score / 2 + 0.5)
+            if len(self.win[name]) > 10:
+                self.win[name] = (self.win[name])[-10:-1]
             #print(name, score)
             return cmd, game_id, None, score, True, dict()
 
@@ -355,15 +357,15 @@ class Actor:
                     # 뽑을 확률 설정
                     probs = np.repeat(0.5 / len(pool), len(pool))
 
-                    for p in pool :
+                    for p in pool:
                         win_tmp = win[p]
 
-                        if len(win_tmp) > 10 :
-                            win_tmp = win[-10:-1]
-                        if not win_tmp : # 비어있으면 => 게임 한판도 안했으면
+                        if len(win_tmp) > 10:
+                            win_tmp = win_tmp[-10:-1]
+                        if not win_tmp:  # 비어있으면 => 게임 한판도 안했으면
                             rates.append(1 - 1 / len(pool))
-                        else :
-                            rates.append(1 - np.mean(win[p]))
+                        else:
+                            rates.append(1 - np.mean(win_tmp))
 
                     for i, rate in enumerate(rates) :
                         prob = (rate / np.sum(rates) / 2)

@@ -51,7 +51,7 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         # wonseok add #
-        self.fc1 = nn.Linear(5 + (len(EconomyStrategy) * 2) + 2, 128)
+        self.fc1 = nn.Linear(6 + (len(EconomyStrategy) * 2) + 2, 128)
         # wonseok end #
         self.norm1 = nn.LayerNorm(128)
         self.fc2 = nn.Linear(128, 128)
@@ -90,11 +90,11 @@ class Bot(sc2.BotAI):
             try:
                 # gpu
                 self.model = Model()
-                model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
-                self.model.load_state_dict(torch.load(model_path))
+                checkpoint = pathlib.Path(__file__).parent / ('model' + version + '.pt')
+                self.model.load_state_dict(torch.load(checkpoint['model_state_dict']))
                 self.model.to(torch.device("cuda"))
                 # cpu
-                # self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+                # self.model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()
@@ -125,6 +125,7 @@ class Bot(sc2.BotAI):
         self.map_height = 63
         self.map_width = 128
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 전체 유닛에서 사령부 검색
+        self.enemy_cc_health_percentage = 1.0
         # 내 그룹 initiate
         self.my_groups = []
         # 적 그룹 initiate
@@ -191,6 +192,9 @@ class Bot(sc2.BotAI):
         # self.cached_known_enemy_structures = self.known_enemy_structures()
         
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first # 왠지는 모르겠는데 이걸 추가해야 실시간 tracking이 된다..
+        self.enemy_cc_cache = self.known_enemy_units(UnitTypeId.COMMANDCENTER) # 적 커맨드도 실시간으로 tracking!
+        if not self.enemy_cc_cache.empty and self.enemy_cc_cache.first.is_visible:
+            self.enemy_cc_health_percentage = self.enemy_cc_cache.first.health_percentage
 
         # 공격 모드가 아닌 기타 모드일때
         # offense_mode가 될지 말지 정함
@@ -293,44 +297,52 @@ class Bot(sc2.BotAI):
         # 특징 추출
         #
 
+        # 일반 state 요소 개수
+        # 이를 편집한다면 Model의 init 함수에서도 input size 변경 필수!
+        remain_state_cnt = 6
+
         # 아군 핵 보유 상태를 기록 +1
         # 아군 offense_mode 기록 +1
-        state = np.zeros(5 + (len(EconomyStrategy) * 2) + 2, dtype=np.float32)
+        state = np.zeros(remain_state_cnt + (len(EconomyStrategy) * 2) + 2, dtype=np.float32)
 
         state[0] = self.cc.health_percentage
-        state[1] = self.minerals / 1000
-        state[2] = self.vespene / 1000
-        state[3] = self.time / 360
-        state[4] = self.state.score.total_damage_dealt_life / 2500
+        # 적 커맨드 HP 상황
+        # snapshot으로 남아 있을 때는 마지막으로 확인된 HP를 사용
+        state[1] = self.enemy_cc_health_percentage
+
+        state[2] = max(1, self.minerals / 1000)
+        state[3] = max(1, self.vespene / 1000)
+        state[4] = max(1, self.time / 360)
+        state[5] = self.state.score.total_damage_dealt_life / 2500
 
         # 아군 유닛 state
         for unit in self.units.not_structure:
             if unit.type_id is UnitTypeId.THORAP:
-                state[5 + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
+                state[remain_state_cnt + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
             elif unit.type_id is UnitTypeId.VIKINGASSAULT:
-                state[5 + EconomyStrategy.to_index[EconomyStrategy.VIKINGFIGHTER.value]] += 1
+                state[remain_state_cnt + EconomyStrategy.to_index[EconomyStrategy.VIKINGFIGHTER.value]] += 1
             elif unit.type_id is UnitTypeId.SIEGETANKSIEGED:
-                state[5 + EconomyStrategy.to_index[EconomyStrategy.SIEGETANK.value]] += 1
+                state[remain_state_cnt + EconomyStrategy.to_index[EconomyStrategy.SIEGETANK.value]] += 1
             else:
-                state[5 + EconomyStrategy.to_index[unit.type_id]] += 1
+                state[remain_state_cnt + EconomyStrategy.to_index[unit.type_id]] += 1
 
         # wonseok add #
         # 적 유닛 state
         for type_id in self.enemy_exists.values():
             if type_id is UnitTypeId.THORAP:
-                state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
+                state[remain_state_cnt + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.THOR.value]] += 1
             elif type_id is UnitTypeId.VIKINGASSAULT:
-                state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.VIKINGFIGHTER.value]] += 1
+                state[remain_state_cnt + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.VIKINGFIGHTER.value]] += 1
             elif type_id is UnitTypeId.SIEGETANKSIEGED:
-                state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.SIEGETANK.value]] += 1
+                state[remain_state_cnt + len(EconomyStrategy) + EconomyStrategy.to_index[EconomyStrategy.SIEGETANK.value]] += 1
             else:
-                state[5 + len(EconomyStrategy) + EconomyStrategy.to_index[type_id]] += 1
+                state[remain_state_cnt + len(EconomyStrategy) + EconomyStrategy.to_index[type_id]] += 1
 
         # has nuke?
-        state[5 + (len(EconomyStrategy) * 2)] = self.has_nuke
+        state[remain_state_cnt + (len(EconomyStrategy) * 2)] = self.has_nuke
 
         # offense_mode
-        state[5 + (len(EconomyStrategy) * 2) + 1] = self.offense_mode
+        state[remain_state_cnt + (len(EconomyStrategy) * 2) + 1] = self.offense_mode
 
         state = state.reshape(1, -1)
         # wonseok end #
