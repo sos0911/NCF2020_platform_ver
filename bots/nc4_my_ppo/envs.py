@@ -324,12 +324,12 @@ class Actor:
                     # pool
                     # set으로 중복 방지
                     # pool은 opp2bot 1개 + (배틀,밤까) 봇 1개 + 배틀 봇 1개 + 탱크 봇 1개 + 밴시 봇 1개 + 타 팀 봇(flash/magic) 6개 + pool 4개 = max 15개의 봇으로 구성
-                    pool = set(["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
-                                "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlash", "OppBotFlashFast", "OppBotFlashFast", "OppBotMagic", "OppBotMagic"])
+                    pool = ["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
+                                "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlash", "OppBotFlashFast", "OppBotFlashFast", "OppBotMagic", "OppBotMagic"]
                     for i in range(1, 5):
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
                         if os.path.isfile(model_path):
-                            pool.add(str(i))
+                            pool.append(str(i))
 
                     players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock))
 

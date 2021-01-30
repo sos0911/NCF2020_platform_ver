@@ -332,24 +332,37 @@ class Bot(sc2.BotAI):
             elif who_attack == "Air" :
                 # 공중 공격 가능한 유닛만
                 air_attack = True
-                
-        
-        if ground_attack and air_attack :
+
+        if ground_attack and air_attack:
             self.offense_mode = True
             for unit in self.units.not_structure:
-                self.evoked[(unit.tag, "offense_mode")] = True
-        
-        elif ground_attack :
+                if self.evoked.get(("scout_unit_tag"), None) is not None and unit.tag == self.evoked.get(
+                        ("scout_unit_tag")):
+                    self.evoked[(unit.tag, "offense_mode")] = False
+                else:
+                    self.evoked[(unit.tag, "offense_mode")] = True
+
+        elif ground_attack:
             self.offense_mode = True
-            for unit in self.units.not_structure.filter(lambda u : u.can_attack_ground or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGFIGHTER]):
-                self.evoked[(unit.tag, "offense_mode")] = True
-        
-        elif air_attack :
+            for unit in self.units.not_structure.filter(
+                    lambda u: u.can_attack_ground or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC,
+                                                                   UnitTypeId.VIKINGFIGHTER, \
+                                                                   UnitTypeId.BATTLECRUISER]):
+                if self.evoked.get(("scout_unit_tag"), None) is not None and unit.tag == self.evoked.get(
+                        ("scout_unit_tag")):
+                    self.evoked[(unit.tag, "offense_mode")] = False
+                else:
+                    self.evoked[(unit.tag, "offense_mode")] = True
+
+        elif air_attack:
             self.offense_mode = True
-            for unit in self.units.not_structure.filter(lambda u : u.can_attack_air or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGASSAULT]):
+            for unit in self.units.not_structure.filter(
+                    lambda u: u.can_attack_air or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC,
+                                                                UnitTypeId.VIKINGASSAULT, \
+                                                                UnitTypeId.BATTLECRUISER]):
                 self.evoked[(unit.tag, "offense_mode")] = True
-        else :
-            for unit in self.units.not_structure :
+        else:
+            for unit in self.units.not_structure:
                 self.evoked[(unit.tag, "offense_mode")] = False
                 self.offense_mode = False
 

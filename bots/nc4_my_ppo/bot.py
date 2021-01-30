@@ -225,7 +225,8 @@ class Bot(sc2.BotAI):
         
         elif ground_attack :
             self.offense_mode = True
-            for unit in self.units.not_structure.filter(lambda u : u.can_attack_ground or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGFIGHTER]):
+            for unit in self.units.not_structure.filter(lambda u : u.can_attack_ground or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGFIGHTER,\
+                                                                                                        UnitTypeId.BATTLECRUISER]):
                     if self.evoked.get(("scout_unit_tag"), None) is not None and unit.tag == self.evoked.get(
                             ("scout_unit_tag")):
                         self.evoked[(unit.tag, "offense_mode")] = False
@@ -234,7 +235,8 @@ class Bot(sc2.BotAI):
         
         elif air_attack :
             self.offense_mode = True
-            for unit in self.units.not_structure.filter(lambda u : u.can_attack_air or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGASSAULT]):
+            for unit in self.units.not_structure.filter(lambda u : u.can_attack_air or u.type_id in [UnitTypeId.RAVEN, UnitTypeId.MEDIVAC, UnitTypeId.VIKINGASSAULT,\
+                                                                                                     UnitTypeId.BATTLECRUISER]):
                     self.evoked[(unit.tag, "offense_mode")] = True
         else :
             for unit in self.units.not_structure :
@@ -1332,7 +1334,7 @@ class Bot(sc2.BotAI):
                     # 탱크가 없다면 주위 임의의 지상 유닛을 때린다.
                     # 우선순위 3. 1,2가 해당되지 않는다면 바로 커맨드로 가서 변환 후 때리기
                     if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
-                        #print(unit)
+                        # print(unit)
                         # 랜딩 flag initiate
                         if self.evoked.get((unit.tag, "prepare_landing"), None) is None:
                             self.evoked[(unit.tag, "prepare_landing")] = False
@@ -1353,27 +1355,30 @@ class Bot(sc2.BotAI):
                             actions = self.defense_moving_shot(actions, unit, 1, target_func)
 
                         # 우선순위 2
-                        else:
+                        elif self.time - self.evoked.get("Last_enemy_aircraft_time", 0.0) >= 1.0:
                             # 이 경우 바이킹 그룹 말고 다른 아군 유닛이 있는가가 굉장히 중요함!
                             # 있으면 통상 메뉴얼대로, 없으면 가급적이면 아군 커맨드로 대피.
                             # 적 공중 유닛이 1초 이상 보이지 않는 경우에만 해당
                             # 유닛 그룹 중앙에서 내려서 싸울 것.
                             ground_targets = self.known_enemy_units.filter(
                                 lambda u: u.type_id is not UnitTypeId.BANSHEE)
-                            our_other_units = self.units.not_structure - self.units({UnitTypeId.VIKINGFIGHTER, UnitTypeId.VIKINGASSAULT})
+                            our_other_units = self.units.not_structure - self.units(
+                                {UnitTypeId.VIKINGFIGHTER, UnitTypeId.VIKINGASSAULT})
                             # 일정 시간 이상(1초)적 공중 유닛이 보이지 않고 그룹 센터로부터 일정 범위 안(3)에 들어온다면 착륙
-                            if not ground_targets.empty :
+                            if not ground_targets.empty:
                                 # 랜딩 준비 단계가 아니면 준비 단계로 만든다.
-                                if self.time - self.evoked.get("Last_enemy_aircraft_time", 0.0) >= 1.0 and \
-                                        not self.evoked.get((unit.tag, "prepare_landing")):
+                                if not self.evoked.get((unit.tag, "prepare_landing")):
                                     self.evoked[(unit.tag, "prepare_landing")] = True
 
                                 ## 랜딩 준비단계일때, 착륙지점이 None이거나 None이 아닌데 landing_loc 계산
                                 landing_loc = self.evoked.get((unit.tag, "landing_loc"), None)
                                 if self.evoked.get((unit.tag, "prepare_landing")) and \
                                         (landing_loc is None or (landing_loc is not None and \
-                                (not (9 <= ground_targets.closest_distance_to(landing_loc) <= 15) or \
-                                 not await self.can_place(building=AbilityId.MORPH_VIKINGASSAULTMODE, position=landing_loc)))):
+                                                                 (not (9 <= ground_targets.closest_distance_to(
+                                                                     landing_loc) <= 15) or \
+                                                                  not await self.can_place(
+                                                                      building=AbilityId.MORPH_VIKINGASSAULTMODE,
+                                                                      position=landing_loc)))):
                                     dist = random.randint(8, 10)
                                     dist_x = random.randint(7, dist)
                                     dist_y = math.sqrt(dist ** 2 - dist_x ** 2) \
@@ -1397,6 +1402,33 @@ class Bot(sc2.BotAI):
                                     actions.append(unit.move(self.cc.position))
                                 else:
                                     actions.append(unit.attack(self.enemy_cc))
+                        # 기다리는 동안은 계속 튀어라
+                        else:
+                            threats = self.select_threat(unit)  # 위협이 있으면 ㅌㅌ
+                            if not threats.empty:
+                                maxrange = 0
+                                total_move_vector = Point2((0, 0))
+                                for eunit in threats:
+                                    if eunit.type_id is UnitTypeId.BATTLECRUISER:
+                                        maxrange = max(maxrange, 6)
+                                        move_vector = unit.position - eunit.position
+                                        move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                                        move_vector *= (6 + 3 - unit.distance_to(eunit)) * 1.5
+                                        total_move_vector += move_vector
+                                    else:
+                                        maxrange = max(maxrange, eunit.air_range)
+                                        move_vector = unit.position - eunit.position
+                                        move_vector /= (math.sqrt(move_vector.x ** 2 + move_vector.y ** 2))
+                                        move_vector *= (eunit.air_range + 3 - unit.distance_to(eunit)) * 1.5
+                                        total_move_vector += move_vector
+
+                                    total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                                    total_move_vector *= maxrange
+                                    # 이동!
+                                    dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                                   self.clamp(unit.position.y + total_move_vector.y, 0,
+                                                              self.map_height)))
+                                    actions.append(unit.move(dest))
 
 
                 # 바이킹 전투 모드(지상)
