@@ -136,23 +136,29 @@ class Trainer:
         self.args = args
         self.device = args.device
         self.model = Model().to(self.device)
-        # parameter for model save
-        # 현재 score가 일정 수치를 넘어 model save가 되면 False로 바뀐다.
-        # 다시 score가 일정 수치 이하로 내려가면 True로 바뀐다.
-        self.possible_model_save = True
 
-        
         # 만약 model.pt가 있다면, model load
         # 이전에 학습된 모델이라고 가정한다.
         model_path = Path(__file__).parent / 'model.pt'
         if os.path.isfile(model_path):
             # checkpoint = torch.load(model_path, map_location=torch.device('cuda')) # gpu
-            checkpoint = torch.load(model_path, map_location=torch.device('cpu')) # cpu
-            self.model.load_state_dict(checkpoint)
-            # model load end
-        
+            # checkpoint = torch.load(model_path, map_location=torch.device('cpu'))  # cpu
+            checkpoint = torch.load(model_path)  # gpu environment
+            self.model.load_state_dict(checkpoint['model_state_dict'])
 
+        # parameter for model save
+        # 현재 score가 일정 수치를 넘어 model save가 되면 False로 바뀐다.
+        # 다시 score가 일정 수치 이하로 내려가면 True로 바뀐다.
+        self.possible_model_save = True
+
+        # 만약 model.pt가 있다면, optimizer load
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.lr, amsgrad=True)
+        if os.path.isfile(model_path):
+            # checkpoint = torch.load(model_path, map_location=torch.device('cuda')) # gpu
+            # checkpoint = torch.load(model_path, map_location=torch.device('cpu'))  # cpu
+            checkpoint = torch.load(model_path)
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
         self.writer = SummaryWriter()
         self.scores = deque(maxlen=250)
         self.saved_model_score = -1e10
@@ -161,7 +167,32 @@ class Trainer:
 
         # for pool
         self.mean_score = -1
-        self.mybot_version = 1
+        self.mybot_version = None
+        self.bot_cache_path = Path(__file__).parent / ('bot_cache.txt')
+
+        # version 파일이 있다면 내용을 가져오기.
+        if os.path.isfile(self.bot_cache_path):
+            with open(self.bot_cache_path, 'r') as cache_reader:
+                Info_cache = cache_reader.read()
+                # 비어 있지 않을 때 내용을 가져와 mybot_version에 넣는다.
+                if Info_cache != '':
+                    splited_Info = Info_cache.split()
+                    self.mybot_version = int(splited_Info[0])
+                    self.saved_model_score = float(splited_Info[1])
+                else:
+                    self.mybot_version = 1
+                    # 혹시 모르는 cache 파일은 없고 모델만 생겼을 때를 대비.
+                    for i in range(1, 5):
+                        model_path = Path(__file__).parent / ('model' + str(i) + '.pt')
+                        if os.path.isfile(model_path):
+                            self.mybot_version = (self.mybot_version % 4) + 1
+        else:
+            self.mybot_version = 1
+            # 혹시 모르는 cache 파일은 없고 모델만 생겼을 때를 대비.
+            for i in range(1, 5):
+                model_path = Path(__file__).parent / ('model' + str(i) + '.pt')
+                if os.path.isfile(model_path):
+                    self.mybot_version = (self.mybot_version % 4) + 1
 
         self.env = Environment(args)
         self.batch_buffer = list()
@@ -400,25 +431,33 @@ class Trainer:
         # 그와는 별개로 역대 최고 모델 model_best.pt를 저장해 둠.
 
         # model save 가능 여부 조절
-        if np.mean(self.scores) <= 0.9 and not self.possible_model_save:
+        if np.mean(self.scores) <= 0.86 and not self.possible_model_save:
             self.possible_model_save = True
 
         if np.mean(self.scores) > self.saved_model_score:
             cur_model_path = Path(__file__).parent / ('model.pt')
-            torch.save(self.model.state_dict(), cur_model_path)
+            torch.save({'model_state_dict': self.model.state_dict(),\
+                        'optimizer_state_dict': self.optimizer.state_dict()}, cur_model_path)
             best_model_path = Path(__file__).parent / ('model_best.pt')
-            torch.save(self.model.state_dict(), best_model_path)
+            torch.save({'model_state_dict': self.model.state_dict(), \
+                        'optimizer_state_dict': self.optimizer.state_dict()}, best_model_path)
             self.saved_model_score = np.mean(self.scores)
-        elif np.mean(self.scores) > 0.9:
+            with open(self.bot_cache_path, 'w') as cache_writer:
+                cache_writer.write(f'{self.mybot_version} {self.saved_model_score:.3f}')
+        elif np.mean(self.scores) > 0.86:
             cur_model_path = Path(__file__).parent / ('model.pt')
-            torch.save(self.model.state_dict(), cur_model_path)
+            torch.save({'model_state_dict': self.model.state_dict(), \
+                        'optimizer_state_dict': self.optimizer.state_dict()}, cur_model_path)
             # model save가 가능하다면 save 후 False 전환
             # 한번에 하나씩만 model 풀이 갱신되게 하기 위함이다.
             if self.possible_model_save:
                 pool_model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
-                torch.save(self.model.state_dict(), pool_model_path)
+                torch.save({'model_state_dict': self.model.state_dict(), \
+                            'optimizer_state_dict': self.optimizer.state_dict()}, pool_model_path)
                 self.mybot_version = (self.mybot_version % 4) + 1
                 self.possible_model_save = False
+                with open(self.bot_cache_path, 'w') as cache_writer:
+                    cache_writer.write(f'{self.mybot_version} {self.saved_model_score:.3f}')
 
     def stop(self):
         self.running = False
