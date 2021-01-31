@@ -455,17 +455,29 @@ class Bot(sc2.BotAI):
 
             # RAVEN
             if unit.type_id is UnitTypeId.RAVEN:
-                # print("RAVEN")
 
-                if unit.distance_to(target) < 15 and unit.energy > 75 and (
-                        self.attacking == True or self.evoked.get((unit.tag, "offense_mode"),
-                                                                  False)):  # 적들이 근처에 있고 마나도 있으면
+                threats = self.select_threat(unit)  # 위협이 있으면 ㅌㅌ
+                banshees = self.known_enemy_units(UnitTypeId.BANSHEE).closer_than(unit.sight_range, unit)
+                our_auto_turrets = self.units(UnitTypeId.AUTOTURRET)
+
+                if not (self.attacking == True or self.evoked.get((unit.tag, "offense_mode"), False)) \
+                        and banshees.exists and unit.energy > 50 and threats.empty:
+                    if our_auto_turrets.empty or (
+                            not our_auto_turrets.empty and our_auto_turrets.closest_distance_to(unit) < 10):
+                        build_loc = banshees.center
+                        if await self.can_place(building=AbilityId.BUILDAUTOTURRET_AUTOTURRET,
+                                                position=build_loc):
+                            actions.append(unit(AbilityId.BUILDAUTOTURRET_AUTOTURRET, build_loc))
+
+                elif unit.distance_to(target) < 15 and unit.energy > 75 and \
+                        (self.attacking == True or self.evoked.get((unit.tag, "offense_mode"), False)):  # 적들이 근처에 있고 마나도 있으면
                     known_only_enemy_units = self.known_enemy_units.not_structure
                     if known_only_enemy_units.exists:  # 보이는 적이 있다면
                         enemy_amount = known_only_enemy_units.amount
                         not_antiarmor_enemy = known_only_enemy_units.filter(
                             # anitarmor가 아니면서 가능대상에서 1초가 지났을 때...
-                            lambda unit: self.time - self.evoked.get((unit.tag, "ANTIARMOR_POSSIBLE"), 0) >= 1.0
+                            lambda unit: self.time - self.evoked.get((unit.tag, "ANTIARMOR_POSSIBLE"),
+                                                                     0) >= 1.0
                             # (not unit.has_buff(BuffId.RAVENSHREDDERMISSILEARMORREDUCTION)) and
                         )
                         not_antiarmor_enemy_amount = not_antiarmor_enemy.amount
@@ -489,7 +501,6 @@ class Bot(sc2.BotAI):
                                     actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
                     # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
                 else:
-                    threats = self.select_threat(unit)  # 위협이 있으면 ㅌㅌ
                     if not threats.empty:
                         maxrange = 0
                         total_move_vector = Point2((0, 0))
@@ -507,12 +518,14 @@ class Bot(sc2.BotAI):
                                 move_vector *= (eunit.air_range + 3 - unit.distance_to(eunit)) * 1.5
                                 total_move_vector += move_vector
 
-                            total_move_vector /= math.sqrt(total_move_vector.x ** 2 + total_move_vector.y ** 2)
+                            total_move_vector /= math.sqrt(
+                                total_move_vector.x ** 2 + total_move_vector.y ** 2)
                             total_move_vector *= maxrange
                             # 이동!
-                            dest = Point2((self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
-                                           self.clamp(unit.position.y + total_move_vector.y, 0,
-                                                      self.map_height)))
+                            dest = Point2(
+                                (self.clamp(unit.position.x + total_move_vector.x, 0, self.map_width),
+                                 self.clamp(unit.position.y + total_move_vector.y, 0,
+                                            self.map_height)))
                             actions.append(unit.move(dest))
 
                     else:

@@ -30,6 +30,8 @@ from ..nc1_simple_battle.bot import Bot as OppBotBattle
 from ..nc1_simple_battle_no_raven.bot import Bot as OppBotBattleNoRaven
 from ..nc1_simple_banshee.bot import Bot as OppBotBanshee
 from ..nc1_simple_flash.bot import Bot as OppBotFlash
+from ..nc1_simple_flash_new.bot import Bot as OppBotFlashNew
+from ..nc1_simple_flash_new_raven.bot import Bot as OppBotFlashNewRaven
 from ..nc1_simple_flash_fast.bot import Bot as OppBotFlashFast
 from ..nc1_simple_magic.bot import Bot as OppBotMagic
 
@@ -70,7 +72,7 @@ class Environment:
         self.sock = self.context.socket(zmq.REP)
 
         self.pool = set(["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
-                                "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlashFast", "OppBotMagic"])
+                                "OppBotTank", "OppBotBanshee", "OppBotFlashNew", "OppBotFlashNewRaven", "OppBotFlashFast", "OppBotMagic", "1", "2", "3", "4"])
 
         self.win = dict()
         for p in self.pool :
@@ -345,7 +347,7 @@ class Actor:
                     # pool = ["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
                     #            "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlash", "OppBotFlashFast", "OppBotFlashFast", "OppBotMagic", "OppBotMagic"]
                     pool = ["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
-                                "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlashFast", "OppBotMagic"]
+                                "OppBotTank", "OppBotBanshee", "OppBotFlashNew", "OppBotFlashNewRaven", "OppBotFlashFast", "OppBotMagic"]
                     for i in range(1, 4):
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
                         if os.path.isfile(model_path):
@@ -386,8 +388,10 @@ class Actor:
                         players[1] = _Bot(Race.Terran, OppBotTank())
                     elif bot_str == "OppBotBanshee" :
                         players[1] = _Bot(Race.Terran, OppBotBanshee())
-                    elif bot_str == "OppBotFlash" :
-                        players[1] = _Bot(Race.Terran, OppBotFlash())
+                    elif bot_str == "OppBotFlashNew" :
+                        players[1] = _Bot(Race.Terran, OppBotFlashNew())
+                    elif bot_str == "OppBotFlashNewRaven" :
+                        players[1] = _Bot(Race.Terran, OppBotFlashNewRaven())
                     elif bot_str == "OppBotFlashFast" :
                         players[1] = _Bot(Race.Terran, OppBotFlashFast())
                     elif bot_str == "OppBotMagic" :

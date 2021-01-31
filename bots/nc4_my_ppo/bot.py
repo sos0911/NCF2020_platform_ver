@@ -94,7 +94,7 @@ class Bot(sc2.BotAI):
                 self.model.load_state_dict(torch.load(checkpoint['model_state_dict']))
                 self.model.to(torch.device("cuda"))
                 # cpu
-                # self.model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
+                # self.model.load_state_dict(torch.load(checkpoint['model_state_dict'], map_location=torch.device('cpu')))
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()
@@ -122,6 +122,7 @@ class Bot(sc2.BotAI):
         self.offense_mode = False
         # 핵 보유?
         self.has_nuke = False
+        self.train_raven = False
         self.map_height = 63
         self.map_width = 128
         self.cc = self.units(UnitTypeId.COMMANDCENTER).first  # 전체 유닛에서 사령부 검색
@@ -383,6 +384,26 @@ class Bot(sc2.BotAI):
 
         if update_flag or self.next_unit is None :
             self.next_unit = self.economy_strategy
+
+        # 밤까마귀 하드코딩
+        self.train_raven = False
+        if self.units(UnitTypeId.RAVEN).empty:
+            # self.enemy_exists는 [unit.tag] 키를 가짐
+            for eunit_type_id in self.enemy_exists.values():
+                if eunit_type_id in [UnitTypeId.GHOST, UnitTypeId.BANSHEE]:
+                    self.train_raven = True
+                    break
+
+        if self.train_raven:
+            if self.vespene >= 175:
+                self.next_unit = UnitTypeId.RAVEN
+            elif self.next_unit in [UnitTypeId.MARAUDER, UnitTypeId.GHOST, UnitTypeId.BATTLECRUISER,
+                                    UnitTypeId.SIEGETANK, UnitTypeId.REAPER, \
+                                    UnitTypeId.THOR, UnitTypeId.VIKINGFIGHTER, UnitTypeId.BANSHEE, UnitTypeId.NUKE]:
+                self.next_unit = None
+
+        if self.next_unit is None:
+            return actions
 
         # MULE 생산은 하드코딩으로 대체한다.
         # 커맨드 체력 정도에 따라 MULE이 원하는 숫자보다 적으면 생산
@@ -1070,7 +1091,7 @@ class Bot(sc2.BotAI):
                         # 시즈모드 박기 전에 위협이 근처에 존재하면 무빙샷
 
                         targets = self.known_enemy_units.filter(
-                            lambda u: not u.is_flying and u.is_visible and unit.distance_to(u) <= 13)
+                            lambda u: not u.is_flying and u.is_visible and unit.distance_to(u) <= 10)
                         target = None
                         armored_targets = targets.filter(lambda u: u.is_armored)
                         if not armored_targets.empty:
@@ -1085,7 +1106,7 @@ class Bot(sc2.BotAI):
 
                         if (threats.empty or (not threats.empty and not threats.filter(
                                 lambda u: u.type_id is UnitTypeId.SIEGETANKSIEGED).empty)) and not our_other_units.empty:
-                            if unit.distance_to(target) > 13:
+                            if unit.distance_to(target) > 10:
                                 actions.append(unit.attack(target))
                             else:
                                 actions.append(unit(AbilityId.SIEGEMODE_SIEGEMODE))
@@ -1123,8 +1144,8 @@ class Bot(sc2.BotAI):
                         #         not await self.can_place(building=AbilityId.SIEGEMODE_SIEGEMODE, position=desired_pos)):
                         if desired_pos is None or self.evoked.get((unit.tag, "rally_point"),
                                                                   self.enemy_cc) != rally_point:
-                            dist = random.randint(8, 10)
-                            dist_x = random.randint(6, dist)
+                            dist = random.randint(3, 4)
+                            dist_x = random.randint(1, dist)
                             dist_y = math.sqrt(dist ** 2 - dist_x ** 2) if random.randint(0,
                                                                                           1) == 0 else -math.sqrt(
                                 dist ** 2 - dist_x ** 2)
@@ -1202,8 +1223,8 @@ class Bot(sc2.BotAI):
                             #         not await self.can_place(building=AbilityId.SIEGEMODE_SIEGEMODE, position=desired_pos)):
                             if desired_pos is None or self.evoked.get((unit.tag, "rally_point"),
                                                                       self.enemy_cc) != rally_point:
-                                dist = random.randint(8, 10)
-                                dist_x = random.randint(6, dist)
+                                dist = random.randint(3, 4)
+                                dist_x = random.randint(1, dist)
                                 dist_y = math.sqrt(dist ** 2 - dist_x ** 2) if random.randint(0,
                                                                                               1) == 0 else -math.sqrt(
                                     dist ** 2 - dist_x ** 2)
@@ -1241,6 +1262,7 @@ class Bot(sc2.BotAI):
                             if targets.empty:
                                 return self.enemy_cc # point2
 
+                            '''
                             light_targets = targets.filter(lambda u: u.is_light)
                             # 경장갑이 타겟 중에 없으니 나머지 중 가장 가까운 놈 때리기
                             if light_targets.empty:
@@ -1248,6 +1270,8 @@ class Bot(sc2.BotAI):
                             # 경장갑
                             else:
                                 return light_targets.sorted(lambda u: unit.distance_to(u))[0]
+                            '''
+                            return targets.sorted(lambda u : unit.distance_to(u))[0]
 
                         actions = self.moving_shot(actions, unit, 10, target_func)
                     # 내가 정찰용 화염차라면?
@@ -1377,7 +1401,7 @@ class Bot(sc2.BotAI):
                             # 적 공중 유닛이 1초 이상 보이지 않는 경우에만 해당
                             # 유닛 그룹 중앙에서 내려서 싸울 것.
                             ground_targets = self.known_enemy_units.filter(
-                                lambda u: u.type_id is not UnitTypeId.BANSHEE)
+                                lambda u: u.type_id is not UnitTypeId.BANSHEE and u.is_visible)
                             our_other_units = self.units.not_structure - self.units(
                                 {UnitTypeId.VIKINGFIGHTER, UnitTypeId.VIKINGASSAULT})
                             # 일정 시간 이상(1초)적 공중 유닛이 보이지 않고 그룹 센터로부터 일정 범위 안(3)에 들어온다면 착륙
@@ -1575,11 +1599,13 @@ class Bot(sc2.BotAI):
 
             if unit.type_id is UnitTypeId.RAVEN:
 
+                threats = self.select_threat(unit)  # 위협이 있으면 ㅌㅌ
                 banshees = self.known_enemy_units(UnitTypeId.BANSHEE).closer_than(unit.sight_range, unit)
                 our_auto_turrets = self.units(UnitTypeId.AUTOTURRET)
 
-                if not (self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False)) \
-                        and banshees.exists and unit.energy > 50:
+                if not (self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"),
+                                                                                      False)) \
+                        and banshees.exists and unit.energy > 50 and threats.empty:
                     if our_auto_turrets.empty or (
                             not our_auto_turrets.empty and our_auto_turrets.closest_distance_to(unit) < 10):
                         build_loc = banshees.center
@@ -1588,7 +1614,8 @@ class Bot(sc2.BotAI):
                             actions.append(unit(AbilityId.BUILDAUTOTURRET_AUTOTURRET, build_loc))
 
                 elif unit.distance_to(target) < 15 and unit.energy > 75 and \
-                        (self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False)):  # 적들이 근처에 있고 마나도 있으면
+                        (self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"),
+                                                                                       False)):  # 적들이 근처에 있고 마나도 있으면
                     known_only_enemy_units = self.known_enemy_units.not_structure
                     if known_only_enemy_units.exists:  # 보이는 적이 있다면
                         enemy_amount = known_only_enemy_units.amount
@@ -1619,7 +1646,6 @@ class Bot(sc2.BotAI):
                                     actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
                     # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
                 else:
-                    threats = self.select_threat(unit)  # 위협이 있으면 ㅌㅌ
                     if not threats.empty:
                         maxrange = 0
                         total_move_vector = Point2((0, 0))

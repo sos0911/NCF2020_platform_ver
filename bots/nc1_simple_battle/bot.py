@@ -296,11 +296,12 @@ class Bot(sc2.BotAI):
 
             if unit.type_id is UnitTypeId.RAVEN:
 
+                threats = self.select_threat(unit)  # 위협이 있으면 ㅌㅌ
                 banshees = self.known_enemy_units(UnitTypeId.BANSHEE).closer_than(unit.sight_range, unit)
                 our_auto_turrets = self.units(UnitTypeId.AUTOTURRET)
 
-                if not (
-                        self.attacking == True or self.tmp_attacking) and banshees.exists and unit.energy > 50:
+                if not (self.attacking == True or self.tmp_attacking) \
+                        and banshees.exists and unit.energy > 50 and threats.empty:
                     if our_auto_turrets.empty or (
                             not our_auto_turrets.empty and our_auto_turrets.closest_distance_to(unit) < 10):
                         build_loc = banshees.center
@@ -308,9 +309,8 @@ class Bot(sc2.BotAI):
                                                 position=build_loc):
                             actions.append(unit(AbilityId.BUILDAUTOTURRET_AUTOTURRET, build_loc))
 
-                elif unit.distance_to(
-                        target) < 15 and unit.energy > 75 and (
-                        self.attacking == True or self.tmp_attacking):  # 적들이 근처에 있고 마나도 있으면
+                elif unit.distance_to(target) < 15 and unit.energy > 75 and \
+                        (self.attacking == True or self.tmp_attacking):  # 적들이 근처에 있고 마나도 있으면
                     known_only_enemy_units = self.known_enemy_units.not_structure
                     if known_only_enemy_units.exists:  # 보이는 적이 있다면
                         enemy_amount = known_only_enemy_units.amount
@@ -341,7 +341,6 @@ class Bot(sc2.BotAI):
                                     actions.append(unit(AbilityId.EFFECT_INTERFERENCEMATRIX, enemy))
                     # 터렛 설치가 효과적일까 모르겠네 돌려보고 해보기
                 else:
-                    threats = self.select_threat(unit)  # 위협이 있으면 ㅌㅌ
                     if not threats.empty:
                         maxrange = 0
                         total_move_vector = Point2((0, 0))

@@ -91,10 +91,10 @@ class Bot(sc2.BotAI):
                 # gpu
                 self.model = Model()
                 checkpoint = pathlib.Path(__file__).parent / ('model' + version + '.pt')
-                self.model.load_state_dict(torch.load(checkpoint['model_state_dict']))
-                self.model.to(torch.device("cuda"))
+                #self.model.load_state_dict(torch.load(checkpoint['model_state_dict']))
+                #self.model.to(torch.device("cuda"))
                 # cpu
-                # self.model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
+                self.model.load_state_dict(torch.load(checkpoint, map_location=torch.device('cpu')))
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()
@@ -386,6 +386,7 @@ class Bot(sc2.BotAI):
         if update_flag or self.next_unit is None :
             self.next_unit = self.economy_strategy
 
+        
         # 밤까마귀 하드코딩
         self.train_raven = False
         if self.units(UnitTypeId.RAVEN).empty:
@@ -402,6 +403,9 @@ class Bot(sc2.BotAI):
                                     UnitTypeId.SIEGETANK, UnitTypeId.REAPER, \
                                     UnitTypeId.THOR, UnitTypeId.VIKINGFIGHTER, UnitTypeId.BANSHEE, UnitTypeId.NUKE]:
                 self.next_unit = None
+                
+        if self.next_unit is None :
+            return actions
 
         # MULE 생산은 하드코딩으로 대체한다.
         # 커맨드 체력 정도에 따라 MULE이 원하는 숫자보다 적으면 생산
