@@ -96,7 +96,7 @@ class Bot(sc2.BotAI):
                 self.model.to(torch.device("cuda"))
                 # cpu
                 # checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
-                # self.model.load_state_dict(torch.load(checkpoint['model_state_dict'], map_location=torch.device('cpu')))
+                # self.model.load_state_dict(torch.load(checkpoint['model_state_dict']))
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()
