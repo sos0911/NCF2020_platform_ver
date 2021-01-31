@@ -88,9 +88,9 @@ class Bot(sc2.BotAI):
         ## donghyun edited ##
         if sock is None:
             try:
-                # gpu
                 self.model = Model()
                 checkpoint = pathlib.Path(__file__).parent / ('model' + version + '.pt')
+                # gpu
                 self.model.load_state_dict(torch.load(checkpoint['model_state_dict']))
                 self.model.to(torch.device("cuda"))
                 # cpu
@@ -1510,50 +1510,6 @@ class Bot(sc2.BotAI):
 
                         if not ground_enemy_units.empty:
                             actions = self.moving_shot(actions, unit, 1, target_func)
-
-                        else:
-                            actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
-
-
-                # 바이킹 전투 모드(지상)
-                # 공격 우선순위 : 공중유닛 > 사정거리 내 탱크 > 지상유닛 > 적 커맨드
-                if unit.type_id is UnitTypeId.VIKINGASSAULT:
-
-                    enemy_air = self.known_enemy_units.filter(lambda e: e.is_flying and e.can_be_attacked)
-                    # 커맨드 때리는 동안은 공중모드로 변하지 않도록 함.
-                    # 보이는 애들에 한해 타깃 선정!
-                    ground_enemy_units = self.known_enemy_units.filter(lambda u: not u.is_flying and u.can_be_attacked)
-
-                    # 아래 코드는 모드 상관없이 작동
-                    # 랜딩을 마쳤으므로 랜딩 준비 flag를 다시 False로 되돌림
-                    if self.evoked.get((unit.tag, "prepare_landing")):
-                        self.evoked[(unit.tag, "prepare_landing")] = False
-
-                    # 아래 코드는 모드 상관없이 작동
-                    # 적의 지상 유닛이나 커맨드가 보이지 않거나 적 공중유닛이 나타나면 전투기로 변환
-                    # 변환 후 로직은 공중 모드에 적혀 있다.
-                    if not enemy_air.empty or ground_enemy_units.empty:
-                        actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))
-
-                    if self.army_strategy is ArmyStrategy.OFFENSE or self.evoked.get((unit.tag, "offense_mode"), False):
-                        # 1. 적 지상유닛 중 가장 가까운 기계부터 공격
-                        # 기계가 없으면 기타 나머지 중 가까운 놈부터
-                        # 2. 적 커맨드
-                        def target_func(unit):
-                            ground_units = self.known_enemy_units.not_flying.filter(
-                                lambda e: e.is_visible)
-
-                            if not ground_units.empty:
-                                enemy_machines = self.known_enemy_units.filter(lambda u: u.is_visible and u.is_mechanical)
-                                if enemy_machines.empty:
-                                    return ground_units.closest_to(unit)
-                                else:
-                                    return enemy_machines.closest_to(unit)
-
-                            return self.enemy_cc
-
-                        if not ground_enemy_units.empty:
-                            actions = self.moving_shot(actions, unit, 1, target_func, 0.5)
 
                         else:
                             actions.append(unit(AbilityId.MORPH_VIKINGFIGHTERMODE))

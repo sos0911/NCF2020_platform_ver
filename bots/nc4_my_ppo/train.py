@@ -145,6 +145,7 @@ class Trainer:
             # checkpoint = torch.load(model_path, map_location=torch.device('cpu'))  # cpu
             checkpoint = torch.load(model_path)  # gpu environment
             self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.model.to(self.device)
 
         # parameter for model save
         # 현재 score가 일정 수치를 넘어 model save가 되면 False로 바뀐다.
