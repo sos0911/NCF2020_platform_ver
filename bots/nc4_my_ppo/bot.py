@@ -384,7 +384,10 @@ class Bot(sc2.BotAI):
                                                                self.known_enemy_units.not_structure.first.type_id is UnitTypeId.MARINE):
             update_flag = True
 
-        if update_flag or self.next_unit is None :
+        # 밤까마귀 하드코딩을 위해 밤까마귀 학습 생산을 막는다.
+        if update_flag or self.next_unit is None:
+            if self.economy_strategy is UnitTypeId.RAVEN:
+                return actions
             self.next_unit = self.economy_strategy
 
         # 밤까마귀 하드코딩
@@ -792,7 +795,7 @@ class Bot(sc2.BotAI):
             # offense strategy가 아닐 때 offense mode가 아니고 근처에 위협이 있을 때는
             # 자기가 공격하지 못하는 유닛이 자길 공격할 수 있는 것이므로 회피 기동 넣기
             if self.army_strategy is not ArmyStrategy.OFFENSE and not self.evoked.get((unit.tag, "offense_mode"),False) and\
-                not self.select_threat(unit).empty and unit.type_id is UnitTypeId.HELLION and not unit.tag == self.evoked.get(("scout_unit_tag")) :
+                not self.select_threat(unit).empty and not unit.tag == self.evoked.get(("scout_unit_tag")) :
 
                 # 밴시는 여기에 들어오면 대기중 혹은 자기들끼리 공격하러 간 경우
                 banshee_escape = False
