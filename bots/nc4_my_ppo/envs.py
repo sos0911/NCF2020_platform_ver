@@ -122,9 +122,9 @@ class Environment:
             game_id = pickle.loads(msg[1])
             score = pickle.loads(msg[2])
 
-            self.win[name].append(score / 2 + 0.5)
-            if len(self.win[name]) > 10:
-                self.win[name] = (self.win[name])[-10:-1]
+            #self.win[name].append(score / 2 + 0.5)
+            #if len(self.win[name]) > 10:
+            #    self.win[name] = (self.win[name])[-10:-1]
             #print(name, score)
             return cmd, game_id, None, score, True, dict()
 
@@ -347,12 +347,13 @@ class Actor:
                     # pool = ["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
                     #            "OppBotTank", "OppBotBanshee", "OppBotFlash", "OppBotFlash", "OppBotFlashFast", "OppBotFlashFast", "OppBotMagic", "OppBotMagic"]
                     pool = ["Opp2Bot", "OppBotBattle", "OppBotBattleNoRaven", \
-                                "OppBotTank", "OppBotBanshee", "OppBotFlashNew", "OppBotFlashNewRaven", "OppBotFlashFast", "OppBotMagic"]
+                                "OppBotTank", "OppBotBanshee", "OppBotFlashNew", "OppBotFlashNewRaven", "OppBotFlashFast", "OppBotFlashFast", "OppBotMagic", "OppBotMagic"]
                     for i in range(1, 4):
                         model_path = pathlib.Path(__file__).parent / ('model' + str(i) + '.pt')
                         if os.path.isfile(model_path):
                             pool.append(str(i))
 
+                    '''
                     win = pickle.loads(tmp[1])
 
                     rates = []
@@ -376,7 +377,10 @@ class Actor:
                     bot_str = list(np.random.choice(pool, 1, False, probs))[0]
 
                     players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock, bot_str))
+                    '''
+                    bot_str = list(np.random.choice(pool, 1))[0]
 
+                    players[0] = _Bot(Race.Terran, MyBot(step_interval, hostname, sock, bot_str))
                     
                     if bot_str == "Opp2Bot" :
                         players[1] = _Bot(Race.Terran, Opp2Bot())

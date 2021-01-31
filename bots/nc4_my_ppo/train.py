@@ -157,8 +157,8 @@ class Trainer:
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.lr, amsgrad=True)
         if os.path.isfile(model_path):
             # checkpoint = torch.load(model_path, map_location=torch.device('cuda')) # gpu
-            # checkpoint = torch.load(model_path, map_location=torch.device('cpu'))  # cpu
-            checkpoint = torch.load(model_path)
+            checkpoint = torch.load(model_path, map_location=torch.device('cpu'))  # cpu
+            # checkpoint = torch.load(model_path)
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         self.writer = SummaryWriter()
@@ -436,26 +436,30 @@ class Trainer:
         if np.mean(self.scores) <= 0.86 and not self.possible_model_save:
             self.possible_model_save = True
 
-        if np.mean(self.scores) > self.saved_model_score:
-            cur_model_path = Path(__file__).parent / ('model.pt')
-            torch.save({'model_state_dict': self.model.state_dict(),\
-                        'optimizer_state_dict': self.optimizer.state_dict()}, cur_model_path)
+        cur_model_path = Path(__file__).parent / ('model.pt')
+        torch.save({'model_state_dict': self.model.state_dict(),\
+                   'optimizer_state_dict': self.optimizer.state_dict()}, cur_model_path)
+        # torch.save(self.model.state_dict(), cur_model_path)
+        if np.mean(self.scores) > self.saved_model_score or len(self.scores) < self.scores.maxlen:
             best_model_path = Path(__file__).parent / ('model_best.pt')
             torch.save({'model_state_dict': self.model.state_dict(), \
-                        'optimizer_state_dict': self.optimizer.state_dict()}, best_model_path)
+                       'optimizer_state_dict': self.optimizer.state_dict()}, best_model_path)
+            # torch.save(self.model.state_dict(), best_model_path)
             self.saved_model_score = np.mean(self.scores)
             with open(self.bot_cache_path, 'w') as cache_writer:
                 cache_writer.write(f'{self.mybot_version} {self.saved_model_score:.3f}')
         elif np.mean(self.scores) > 0.86:
             cur_model_path = Path(__file__).parent / ('model.pt')
             torch.save({'model_state_dict': self.model.state_dict(), \
-                        'optimizer_state_dict': self.optimizer.state_dict()}, cur_model_path)
+                       'optimizer_state_dict': self.optimizer.state_dict()}, cur_model_path)
+            # torch.save(self.model.state_dict(), cur_model_path)
             # model save가 가능하다면 save 후 False 전환
             # 한번에 하나씩만 model 풀이 갱신되게 하기 위함이다.
             if self.possible_model_save:
                 pool_model_path = Path(__file__).parent / ('model' + str(self.mybot_version) + '.pt')
                 torch.save({'model_state_dict': self.model.state_dict(), \
                             'optimizer_state_dict': self.optimizer.state_dict()}, pool_model_path)
+                # torch.save(self.model.state_dict(), pool_model_path)
                 self.mybot_version = (self.mybot_version % 4) + 1
                 self.possible_model_save = False
                 with open(self.bot_cache_path, 'w') as cache_writer:
