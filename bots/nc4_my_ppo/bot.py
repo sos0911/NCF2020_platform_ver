@@ -91,12 +91,12 @@ class Bot(sc2.BotAI):
                 self.model = Model()
                 model_path = pathlib.Path(__file__).parent / ('model' + version + '.pt')
                 # gpu
-                checkpoint = torch.load(model_path)
-                self.model.load_state_dict(checkpoint['model_state_dict'])
-                self.model.to(torch.device("cuda"))
+                # checkpoint = torch.load(model_path)
+                # self.model.load_state_dict(checkpoint['model_state_dict'])
+                # self.model.to(torch.device("cuda"))
                 # cpu
-                # checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
-                # self.model.load_state_dict(torch.load(checkpoint['model_state_dict']))
+                checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
+                self.model.load_state_dict(checkpoint['model_state_dict'])
             except Exception as exc:
                 import traceback;
                 traceback.print_exc()
